@@ -33,7 +33,11 @@ data/
 # PyInstaller
 *.manifest
 *.spec
-
+*.exe
+*.db
+venv/
+__pycache__/
+cookies.txt
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
