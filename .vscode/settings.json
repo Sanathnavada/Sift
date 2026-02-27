@@ -1,0 +1,7 @@
+{
+    "python.analysis.extraPaths": [
+        "./RAE",
+        "./music1",
+        "./sanath_bot"
+    ]
+}

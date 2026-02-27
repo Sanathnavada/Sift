@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(venv/Scripts/pip install playwright)",
+      "Bash(venv/Scripts/playwright install chromium)",
+      "Bash(ls \"C:\\\\Users\\\\Dell\\\\.claude\\\\projects\\\\c--Users-Dell-Desktop-code\\\\memory\"\" 2>/dev/null || echo \"dir does not exist \")"
+    ]
+  }
+}
