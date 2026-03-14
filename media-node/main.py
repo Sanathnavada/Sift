@@ -3,10 +3,11 @@ import argparse
 import logging
 import torch
 import os
-from processor import ModelHandler
-from utils import ensure_dir
-from services import ScraperService, YoutubeService
 
+from processor import ModelHandler
+from utils import ensure_dir,sanitize_filename
+from services import ScraperService, YoutubeService
+from llm_service import LLMCleaner # NEW IMPORT
 """USAGE:
 Mode	Implementation
 --private-user	WebCollectionFetcher (Playwright browser + web API interception)
@@ -32,6 +33,8 @@ python -m main --post https://www.instagram.com/p/Cqd7ZJdDLLj/ --outdir ./data/p
 
  # YouTube:
  python -m main --youtube "data/my_transcripts/urls.txt" --outdir "./data/my_transcripts"
+ 
+ python -m main --clean-bulk ./data/my_collections/test.txt
 """
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -52,7 +55,8 @@ def main():
     mode_group.add_argument("--youtube",     metavar="URL_OR_FILE")
     mode_group.add_argument("--ig-bulk",     metavar="FILE",
                             help="Text file containing Instagram post URLs")
-
+    mode_group.add_argument("--clean-bulk",  metavar="FILE",
+                            help="Process an existing raw text file through the LLM cleaner")
     parser.add_argument("--username",  help="Your Instagram username")
     parser.add_argument("--password",  help="Your Instagram password")
     parser.add_argument("--totp",      metavar="SECRET",
@@ -62,11 +66,66 @@ def main():
 
     parser.add_argument("--first-n",   type=int, default=0)
     parser.add_argument("--last-n",    type=int, default=0)
-    parser.add_argument("--outdir",    default="./archive")
+    parser.add_argument("--outdir")
     parser.add_argument("--checkpoint", default="checkpoint.json")
 
     args = parser.parse_args()
+    
+    
+    base_dir = args.outdir if args.outdir else "./data/insta"
+    combined_file_path = None
+    session_dir = None
 
+    if args.private_user:
+        safe_name = sanitize_filename(args.private_user)
+        session_dir = os.path.join(base_dir, "my_collections")
+        outdir = os.path.join(session_dir, safe_name)
+        combined_file_path = os.path.join(session_dir, f"{safe_name}.txt")
+
+    elif args.public_user:
+        safe_name = sanitize_filename(args.public_user)
+        outdir = os.path.join(base_dir, "public_users", safe_name)
+        combined_file_path = os.path.join(base_dir, "public_users", f"{safe_name}_posts.txt")
+
+    elif args.post:
+        outdir = os.path.join(base_dir, "individual_posts")
+        combined_file_path = os.path.join(base_dir, "individual_posts", "posts_combined.txt")
+
+    elif args.ig_bulk:
+        outdir = os.path.join(base_dir, "bulk_posts")
+        combined_file_path = os.path.join(base_dir, "bulk_posts", "bulk_combined.txt")
+
+    elif args.youtube:
+        outdir = args.outdir if args.outdir else "./data/youtube"
+        # YouTube doesn't use the combined file logic yet, handled in YoutubeService
+
+    if not args.clean_bulk:
+        ensure_dir(outdir)
+        checkpoint_path = os.path.join(outdir, args.checkpoint)
+
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    if args.clean_bulk:
+        logger.info(f"=== MODE: LLM Bulk Cleaning ({args.clean_bulk}) ===")
+        if not os.path.isfile(args.clean_bulk):
+            logger.error(f"File not found: {args.clean_bulk}")
+            sys.exit(1)
+            
+        # Create output filename (e.g., all_combined_cleaned.txt)
+        base, ext = os.path.splitext(args.clean_bulk)
+        output_filepath = f"{base}_cleaned{ext}"
+        
+        cleaner = LLMCleaner()
+        cleaner.clean_bulk_file(args.clean_bulk, output_filepath)
+        return
     # --private-user uses the browser fetcher.
     # Credentials are only needed on the very first run to log in; after that
     # the session is cached in web_session.json and no flags are required.
@@ -115,6 +174,7 @@ def main():
         from insta.web_fetcher import WebCollectionFetcher
         web = WebCollectionFetcher(
             outdir=args.outdir,
+            session_dir=session_dir,
             username=args.username,   # None is fine if session is cached
             password=args.password,
         )
@@ -145,15 +205,19 @@ def main():
 
     elif args.public_user:
         logger.info(f"=== MODE: Public User (@{args.public_user}) ===")
-        media_items = fetcher.fetch_user_posts(args.public_user,
-                                               first_n=args.first_n, last_n=args.last_n)
-        ScraperService.process_posts(media_items, args.outdir, device, checkpoint_path)
+        
+        # Apply the default 50 limit if not specified
+        if args.first_n == 0 and args.last_n == 0:
+            args.first_n = 50
+            
+        media_items = fetcher.fetch_user_posts(args.public_user, first_n=args.first_n, last_n=args.last_n)
+        ScraperService.process_posts(media_items, outdir, device, checkpoint_path, combined_file_path)
 
     elif args.post:
         logger.info("=== MODE: Single Post ===")
         media_items = fetcher.fetch_single_post(args.post)
         if media_items:
-            ScraperService.process_posts(media_items, args.outdir, device)
+            ScraperService.process_posts(media_items, outdir, device, checkpoint_path, combined_file_path)
         else:
             logger.error("Could not fetch the post.")
             sys.exit(1)

@@ -1,0 +1,37 @@
+{
+    "uuids": {
+        "phone_id": "25b91ef3-8a0e-46eb-b21c-c3abc4101f56",
+        "uuid": "df6fe27d-6a07-4b29-809d-232110819459",
+        "client_session_id": "1c041ff3-1930-49cc-a9e3-d039fd9237ec",
+        "advertising_id": "cb6967e6-7ac7-41e5-8b4a-7d8e991c1a8c",
+        "android_device_id": "android-7cd82fc4a8b32d41",
+        "request_id": "91438b57-cb87-44e5-8397-dc2487b77d13",
+        "tray_session_id": "52558330-d436-4fae-b35d-0ef48dc751d4"
+    },
+    "mid": "aZGjOwABAAF7NFmDLwl3TtjsD4Jp",
+    "ig_u_rur": null,
+    "ig_www_claim": null,
+    "authorization_data": {
+        "ds_user_id": "8170510271",
+        "sessionid": "8170510271%3AYSDC0UzfdewZJw%3A23%3AAYhPbPDX64Yp3wp7gpDR8C-aNsVkRHx38kTrt4HiFw"
+    },
+    "cookies": {},
+    "last_login": 1771152314.7792752,
+    "device_settings": {
+        "app_version": "282.0.0.22.119",
+        "android_version": 33,
+        "android_release": "13",
+        "dpi": "480dpi",
+        "resolution": "1080x2316",
+        "manufacturer": "samsung",
+        "device": "SM-S908U",
+        "model": "Galaxy S22 Ultra",
+        "cpu": "qcom",
+        "version_code": "314665256"
+    },
+    "user_agent": "Instagram 269.0.0.18.75 Android (26/8.0.0; 480dpi; 1080x1920; OnePlus; 6T Dev; devitron; qcom; en_US; 314665256)",
+    "country": "US",
+    "country_code": 1,
+    "locale": "en_US",
+    "timezone_offset": -14400
+}

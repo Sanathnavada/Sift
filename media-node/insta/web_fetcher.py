@@ -39,13 +39,14 @@ class WebCollectionFetcher:
     # Fixed session filename — no username prefix needed
     _SESSION_FILE = "web_session.json"
 
-    def __init__(self, outdir, username=None, password=None):
+    def __init__(self, outdir, session_dir, username=None, password=None):
         self.outdir    = outdir
-        self.username  = username   # may be None if session already cached
+        self.username  = username   
         self.password  = password
-        self.session_file = os.path.join(outdir, self._SESSION_FILE)
-        self._rsession = None   # requests.Session, built after auth
-
+        
+        # Save session in the parent directory so it's shared across collections
+        self.session_file = os.path.join(session_dir, self._SESSION_FILE)
+        self._rsession = None
     # ------------------------------------------------------------------ #
     #  Browser auth                                                        #
     # ------------------------------------------------------------------ #

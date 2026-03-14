@@ -1,3 +1,4 @@
+import code
 import os
 import json
 import logging
@@ -5,7 +6,7 @@ import torch
 import time
 import textwrap
 from pathlib import Path
-
+from llm_service import LLMCleaner
 # Unified imports reflecting your tree structure
 from utils import (
     ensure_dir, get_content_type, download_file, NpEncoder, 
@@ -128,7 +129,7 @@ class ScraperService:
         return full
 
     @classmethod
-    def process_posts(cls, media_items, outdir, device=None, checkpoint_path=None):
+    def process_posts(cls, media_items, outdir, device=None, checkpoint_path=None, combined_file_path=None):
         """
         Main orchestration function for Instagram.
         """
@@ -170,15 +171,27 @@ class ScraperService:
         logger.info(f"Batches: {len(vlm_batch)} visual, {len(audio_batch)} audio")
 
         handler = ModelHandler(device)
-        combined_path = os.path.join(outdir, "all_combined.txt")
-        combined_fh = open(combined_path, "a", encoding="utf-8")
+        
+        # Initialize LLM Cleaner
+        llm_cleaner = LLMCleaner()
+
+        if not combined_file_path:
+            combined_file_path = os.path.join(outdir, "all_combined.txt")
+            
+        base, ext = os.path.splitext(combined_file_path)
+        cleaned_file_path = f"{base}_cleaned{ext}"
+
+        # Ensure the directory for the text file exists (since it might be outside outdir)
+        ensure_dir(os.path.dirname(combined_file_path))
+
+        combined_fh = open(combined_file_path, "a", encoding="utf-8")
+        cleaned_fh = open(cleaned_file_path, "a", encoding="utf-8")
 
         def process_and_write(media_item, is_audio_pass):
             code = media_item.get("code")
             folder = os.path.join(outdir, f"post_{code}")
             
             try:
-                # 1. Download files first so downloading doesn't skew GPU timers
                 meta = cls.process_media_entry(media_item, folder)
                 results = {
                     "shortcode": code,
@@ -187,7 +200,6 @@ class ScraperService:
                     "media": []
                 }
                 
-                # --- START GPU MONITOR & TIMER ---
                 monitor = GPUPowerMonitor()
                 monitor.start()
                 start_time = time.time()
@@ -205,8 +217,6 @@ class ScraperService:
                         text = run_florence_ocr(fpath, handler)
                         results["media"].append({"path": fpath, "type": "image", "clean_text": text})
 
-                # --- STOP GPU MONITOR & TIMER ---
-                # --- NEW: Stop Timers and Capture Metrics ---
                 actual_time_secs = time.time() - start_time
                 metrics = monitor.stop(actual_time_secs)
                 
@@ -224,26 +234,35 @@ class ScraperService:
                                  f"Energy: {metrics['energy_wh']:.4f} Wh")
                     logger.info(f"⚡ {power_str}")
 
-                final = cls.save_outputs(folder, results)
+                final_raw_text = cls.save_outputs(folder, results)
 
-                combined_fh.write(f"Post: https://www.instagram.com/p/{code}/\n")
-                combined_fh.write(f"Type: {meta['type']}\n")
-                if meta['caption']: combined_fh.write(f"Caption: {meta['caption']}\n")
+                # --- 1. Construct the Raw Block ---
+                raw_block = f"Post: https://www.instagram.com/p/{code}/\n"
+                raw_block += f"Type: {meta['type']}\n"
+                if meta['caption']: 
+                    raw_block += f"Caption: {meta['caption']}\n"
                 
-                # Append Profiling Data to IG Master File
-                combined_fh.write(f"Processing Time: {time_str}\n")
-                if metrics: combined_fh.write(f"GPU Metrics: {power_str}\n")
+                raw_block += "-" * 40 + "\n"
+                raw_block += final_raw_text + "\n"
                 
-                combined_fh.write("-" * 40 + "\n")
-                combined_fh.write(final + "\n")
+                # --- 2. Write Raw to standard file ---
+                combined_fh.write(raw_block)
                 combined_fh.write("=" * 80 + "\n\n")
                 combined_fh.flush()
+
+                # --- 3. Clean and Write to Cleaned file ---
+                logger.info(f"✨ Sending post {code} to LLM for cleaning...")
+                cleaned_text = llm_cleaner.clean_text(raw_block)
+                
+                cleaned_fh.write(cleaned_text + "\n")
+                cleaned_fh.write("=" * 80 + "\n\n")
+                cleaned_fh.flush()
 
                 processed.add(code)
                 if checkpoint_path:
                     cls.save_checkpoint(checkpoint_path, processed)
 
-                logger.info(f"✓ Processed {code}")
+                logger.info(f"✓ Processed and Cleaned {code}")
             except Exception as e:
                 logger.error(f"Failed {code}: {e}")
 
@@ -262,8 +281,9 @@ class ScraperService:
                 process_and_write(media, is_audio_pass=True)
 
         combined_fh.close()
+        cleaned_fh.close()
         logger.info("✓ Processing complete!")
-
+        
 class YoutubeService:
     """
     Business logic layer for processing YouTube videos with memory and disk cleanup.
@@ -330,9 +350,6 @@ class YoutubeService:
                     f.write(f"Title: {title}\n")
                     f.write(f"URL: {url}\n")
                     f.write(f"Original Audio Quality: {quality_str}\n")
-                    f.write(f"Actual Processing Time: {actual_time_str}\n")
-                    if metrics:
-                        f.write(f"GPU Hardware Profile: {power_str}\n")
                     f.write("-" * 80 + "\n")
                     f.write(wrapped_transcript + "\n")
                     f.write("-" * 80 + "\n")
