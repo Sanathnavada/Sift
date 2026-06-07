@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Media Engine | Gateway Console{% endblock %}
+{% block content %}
+<section class="page-header">
+  <span class="eyebrow">Media Engine</span>
+  <h1>Turn YouTube and Instagram sources into structured files.</h1>
+  <p>Supports queued YouTube transcription, Instagram scraping, OCR, Whisper passes, and LLM cleanup.</p>
+</section>
+
+<section class="segment-bar" data-tab-group>
+  <button class="segment-bar__button is-active" hx-get="/ui/media/forms/youtube" hx-target="#media-form-panel" hx-swap="innerHTML" data-tab> YouTube </button>
+  <button class="segment-bar__button" hx-get="/ui/media/forms/post" hx-target="#media-form-panel" hx-swap="innerHTML" data-tab> Instagram Post </button>
+  <button class="segment-bar__button" hx-get="/ui/media/forms/public-user" hx-target="#media-form-panel" hx-swap="innerHTML" data-tab> Public User </button>
+  <button class="segment-bar__button" hx-get="/ui/media/forms/private-user" hx-target="#media-form-panel" hx-swap="innerHTML" data-tab> Private Collection </button>
+  <button class="segment-bar__button" hx-get="/ui/media/forms/bulk" hx-target="#media-form-panel" hx-swap="innerHTML" data-tab> Bulk URLs </button>
+  <button class="segment-bar__button" hx-get="/ui/media/forms/clean" hx-target="#media-form-panel" hx-swap="innerHTML" data-tab> Clean Output </button>
+</section>
+
+<section class="console-grid">
+  <div class="panel" id="media-form-panel">
+    {% include "partials/media_youtube_form.html" %}
+  </div>
+
+  <div class="panel" id="media-task-panel">
+    {% set empty_title = "No media task yet" %}
+    {% set empty_body = "Submit a YouTube or Instagram workflow and the queue-aware task card will appear here." %}
+    {% include "partials/empty_task_panel.html" %}
+  </div>
+</section>
+
+<section class="card-grid card-grid--three">
+  <article class="note-card">
+    <h3>Input normalization</h3>
+    <p>The media UI supports direct input, multi-line batch input, and local `.txt` or `.json` files where the backend allows them.</p>
+  </article>
+  <article class="note-card">
+    <h3>Artifact mode</h3>
+    <p>Leave the output directory blank to create temporary downloadable artifacts instead of persistent files.</p>
+  </article>
+  <article class="note-card">
+    <h3>Processing stack</h3>
+    <p>Behind the gateway, YouTube and Instagram tasks pass through scraping, OCR, transcription, and LLM cleanup layers.</p>
+  </article>
+</section>
+{% endblock %}

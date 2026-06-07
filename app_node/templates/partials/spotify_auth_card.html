@@ -1,0 +1,62 @@
+<article class="task-card">
+  <div class="task-card__header">
+    <div>
+      <span class="task-card__kicker">Spotify Authorization</span>
+      <h3>
+        {% if session.status == "authorized" %}
+        Spotify connected
+        {% elif session.status == "failed" %}
+        Spotify authorization failed
+        {% else %}
+        Waiting for Spotify approval
+        {% endif %}
+      </h3>
+    </div>
+    <span class="status-pill status-pill--{% if session.status == 'authorized' %}success{% elif session.status == 'failed' %}danger{% else %}accent{% endif %}">
+      {{ session.status.replace('_', ' ') }}
+    </span>
+  </div>
+
+  {% if session.status == "waiting_for_user" %}
+  <ol class="step-list">
+    <li>Open Spotify authorization.</li>
+    <li>Approve access in the popup window.</li>
+    <li>The popup closes and this page updates automatically.</li>
+  </ol>
+  <div class="button-row">
+    <a class="button" href="{{ session.authorization_url }}" data-spotify-auth-url>Open Spotify authorization</a>
+    <button class="button button--ghost" hx-get="{{ poll_url }}" hx-target="#music-task-panel" hx-swap="innerHTML">
+      Check Status
+    </button>
+  </div>
+  <details class="trouble-panel">
+    <summary>Having trouble?</summary>
+    <form class="stack-form compact-form" hx-post="/ui/music/user/auth/complete" hx-target="#music-task-panel" hx-swap="innerHTML" hx-disabled-elt="find button" hx-indicator="find .submit-indicator">
+      <input type="hidden" name="auth_session_id" value="{{ session.id }}">
+      <div class="field">
+        <label class="label" for="spotify-redirect-url">Redirect URL or code</label>
+        <input class="input" type="text" id="spotify-redirect-url" name="redirected_url" placeholder="Paste the browser redirect URL if auto-return failed">
+      </div>
+      <button class="button button--ghost" type="submit">Complete Authorization</button>
+      <span class="submit-indicator" aria-live="polite">Completing...</span>
+    </form>
+  </details>
+  {% elif session.status == "authorized" %}
+  <p class="task-card__body">Spotify authorization is complete. You can fetch your playlists now. <b> Once you click the fetch button, please scroll down to see your playlists.</b></p>
+  <div class="button-row">
+    <button class="button" hx-post="/ui/music/user/playlists/submit" hx-target="#music-library-panel" hx-swap="innerHTML">
+      Fetch Playlists
+    </button>
+  </div>
+  {% else %}
+  <div class="callout callout--danger">
+    <strong>Authorization failed</strong>
+    <p>{{ session.error or "Spotify did not authorize this session." }}</p>
+  </div>
+  <div class="callout">
+    <strong>Check Spotify app settings</strong>
+    <p>Confirm this app is allowed to use your Spotify account in the Spotify Developer Dashboard.</p>
+    <p>For Development Mode apps, the app owner needs Spotify Premium and this Spotify account must be added under Users Management.</p>
+  </div>
+  {% endif %}
+</article>

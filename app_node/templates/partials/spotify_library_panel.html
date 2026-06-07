@@ -1,0 +1,20 @@
+<article class="spotify-library-card">
+  <div class="task-card__header">
+    <div>
+      <span class="task-card__kicker">Spotify Library</span>
+      <h3>Your playlists are ready</h3>
+    </div>
+    <span class="status-pill status-pill--success">connected</span>
+  </div>
+
+  <p class="task-card__body">Select full playlists or expand a playlist to choose individual tracks.</p>
+
+  {% if library_warnings %}
+  <div class="callout">
+    <strong>Partial Spotify fetch</strong>
+    <p>{{ library_warnings|length }} playlist(s) could not be fetched due to Spotify/network timeouts. You can retry later.</p>
+  </div>
+  {% endif %}
+
+  {% include "partials/music_playlist_selector.html" %}
+</article>

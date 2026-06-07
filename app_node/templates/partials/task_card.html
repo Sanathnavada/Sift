@@ -1,0 +1,130 @@
+<article
+  class="task-card"
+  {% if is_polling %}
+  hx-get="{{ task_card_url }}"
+  hx-trigger="every {{ poll_interval_seconds }}s"
+  hx-swap="outerHTML"
+  {% endif %}>
+  {% set on_detail_page = is_detail_view if is_detail_view is defined else "task-detail-panel" in task_card_url %}
+  <div class="task-card__header">
+    <div>
+      <span class="task-card__kicker">{{ title or "Task" }}</span>
+      <h3>{{ display_name }}</h3>
+    </div>
+    <span class="status-pill status-pill--{% if task.status == 'completed' %}success{% elif task.status == 'failed' %}danger{% elif task.status == 'cancelled' %}warning{% elif task.status == 'running' %}accent{% else %}muted{% endif %}">
+      {{ task.status }}
+    </span>
+  </div>
+
+  <div class="meta-grid">
+    <div>
+      <span class="meta-grid__label">{{ item_label }}</span>
+      <span class="meta-grid__value">{{ item_detail }}</span>
+    </div>
+    <div>
+      <span class="meta-grid__label">Queue position</span>
+      <span class="meta-grid__value">{{ task.queue_position if task.queue_position else "Now" }}</span>
+    </div>
+    <div>
+      <span class="meta-grid__label">Submitted</span>
+      <span class="meta-grid__value">{{ submitted_label }}</span>
+    </div>
+    <div>
+      <span class="meta-grid__label">Started</span>
+      <span class="meta-grid__value">{{ started_label }}</span>
+    </div>
+    <div>
+      <span class="meta-grid__label">Finished</span>
+      <span class="meta-grid__value">{{ finished_label }}</span>
+    </div>
+    <div>
+      <span class="meta-grid__label">Duration</span>
+      <span class="meta-grid__value">{{ duration_label or "In progress" }}</span>
+    </div>
+  </div>
+
+  <div class="progress-strip">
+    <span class="progress-step {% if task.status in ['queued', 'running', 'completed', 'failed', 'cancelled'] %}is-complete{% endif %} {% if task.status == 'queued' %}is-current{% endif %}">Queued</span>
+    <span class="progress-bar {% if task.status in ['running', 'completed', 'failed', 'cancelled'] %}is-filled{% endif %}"></span>
+    <span class="progress-step {% if task.status in ['running', 'completed', 'failed', 'cancelled'] %}is-complete{% endif %} {% if task.status == 'running' %}is-current{% endif %}">Running</span>
+    <span class="progress-bar {% if task.status in ['completed', 'failed', 'cancelled'] %}is-filled{% endif %}"></span>
+    <span class="progress-step {% if task.status in ['completed', 'failed', 'cancelled'] %}is-complete{% endif %} {% if task.status in ['completed', 'failed', 'cancelled'] %}is-current{% endif %}">Finished</span>
+  </div>
+
+  {% if task_events %}
+  <section class="task-card__section">
+    <div class="section-head section-head--compact">
+      <h4>Current Activity</h4>
+      <span class="panel__meta">{{ timezone_label }}</span>
+    </div>
+    <ol class="event-list">
+      {% for event in task_events %}
+      <li>
+        <span class="event-list__time">{{ event.short_time }}</span>
+        <span>{{ event.message }}</span>
+      </li>
+      {% endfor %}
+    </ol>
+  </section>
+  {% endif %}
+
+  {% if task.error %}
+  <div class="callout callout--danger">
+    <strong>Error</strong>
+    <p>{{ task.error }}</p>
+  </div>
+  {% endif %}
+
+  {% if task.status == 'completed' and task.service == 'music.user_playlists' and playlist_options %}
+  <div class="stack">
+    <div class="callout">
+      <strong>Spotify library ready</strong>
+      <p>Select one or more playlists below and submit the download job.</p>
+    </div>
+    {% include "partials/music_playlist_selector.html" %}
+  </div>
+  {% endif %}
+
+  {% if task.artifacts %}
+  <section class="task-card__section">
+    <div class="section-head section-head--compact">
+      <h4>Artifacts</h4>
+      {% if not on_detail_page %}
+      <a class="button button--ghost button--small" href="{{ task_page_url }}">Open task page</a>
+      {% endif %}
+    </div>
+    {% include "partials/artifact_list.html" %}
+  </section>
+  {% endif %}
+
+  {% if task.result %}
+  <section class="task-card__section">
+    <div class="section-head section-head--compact">
+      <h4>Result</h4>
+      {% if not on_detail_page %}
+      <a class="button button--ghost button--small" href="{{ task_page_url }}">Open full detail</a>
+      {% endif %}
+    </div>
+    {% if task.result.output is defined and task.result.output.output_mode is defined %}
+    <p class="panel__meta">Mode: {{ task.result.output.output_mode }}</p>
+    {% endif %}
+    {% if result_items %}
+    <div class="result-list">
+      {% for item in result_items %}
+      <div class="result-row result-row--{{ item.status }}">
+        <span class="result-row__status">{{ item.status }}</span>
+        <span class="result-row__input">{{ item.input }}</span>
+        {% if item.error %}
+        <span class="result-row__error">{{ item.error }}</span>
+        {% elif item.resolved_url_count is defined %}
+        <span class="result-row__meta">{{ item.resolved_url_count }} match(es)</span>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  
+</article>

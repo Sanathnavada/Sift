@@ -1,0 +1,15 @@
+{% set visible_artifacts = artifacts if artifacts is defined else task.artifacts %}
+{% if visible_artifacts %}
+<div class="artifact-list">
+  {% for artifact in visible_artifacts %}
+  <a class="artifact-row" href="/api/tasks/{{ task.id }}/artifacts/{{ artifact.artifact_id | urlencode }}" download="{{ artifact.name }}">
+    <span class="artifact-row__name">{{ artifact.name }}</span>
+    <span class="artifact-row__meta">{{ artifact.content_type }}</span>
+    <span class="artifact-row__meta">{{ (artifact.size_bytes / 1024) | round(1) }} KB</span>
+    <span class="artifact-row__action">Download</span>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<p class="panel__meta">No artifacts are available for this task.</p>
+{% endif %}

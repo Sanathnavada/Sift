@@ -1,0 +1,16 @@
+<div class="section-head section-head--compact">
+  <h3>Spotify Library</h3>
+  <p>Start the browser-based Spotify auth flow, fetch your playlists, then download selected items.</p>
+</div>
+<div class="stack">
+  <article class="note-card note-card--inline">
+    <h3>How it works</h3>
+    <p>The UI starts a Spotify auth session, opens the browser flow, polls the session, then fetches playlists through the gateway.</p>
+  </article>
+
+  <div class="button-row">
+    <button class="button" hx-post="/ui/music/user/auth/start" hx-target="#music-task-panel" hx-swap="innerHTML">
+      Start Spotify Auth
+    </button>
+  </div>
+</div>

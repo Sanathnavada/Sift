@@ -1,0 +1,27 @@
+<div class="section-head section-head--compact">
+  <h3>Public User</h3>
+  <p>Scrape a public Instagram profile and process the first N posts.</p>
+</div>
+<form class="stack-form" hx-post="/ui/media/public-user/submit" hx-target="#media-task-panel" hx-swap="innerHTML" hx-disabled-elt="find button" hx-indicator="find .submit-indicator">
+  <div class="field">
+    <label class="label" for="media-public-username">Instagram username</label>
+    <input class="input" type="text" id="media-public-username" name="username" placeholder="gingerpotter21">
+  </div>
+  <div class="field">
+    <label class="label" for="media-public-firstn">First N posts</label>
+    <input class="input" type="number" min="1" value="3" id="media-public-firstn" name="first_n">
+  </div>
+  <div class="field-group" data-output-mode-group>
+    <span class="label">Output mode</span>
+    <div class="choice-row">
+      <label class="choice"><input type="radio" name="output_mode" value="temporary" checked> Temporary artifacts</label>
+      <label class="choice"><input type="radio" name="output_mode" value="persistent"> Persistent outdir</label>
+    </div>
+  </div>
+  <div class="field is-hidden" data-outdir-field>
+    <label class="label" for="media-public-outdir">Output directory</label>
+    <input class="input" type="text" id="media-public-outdir" name="outdir" placeholder="./data/public">
+  </div>
+  <button class="button button--wide" type="submit">Submit Job</button>
+  <span class="submit-indicator" aria-live="polite">Submitting...</span>
+</form>

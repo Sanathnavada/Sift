@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Music Engine | Gateway Console{% endblock %}
+{% block content %}
+<section class="page-header">
+  <span class="eyebrow">Music Engine</span>
+  <h1>Resolve tracks, playlists, and YouTube sources into local audio artifacts.</h1>
+  <p>Download public music inputs or connect Spotify to work from your personal playlists.</p>
+</section>
+
+<section class="segment-bar" data-tab-group>
+  <button class="segment-bar__button is-active" hx-get="/ui/music/forms/download" hx-target="#music-form-panel" hx-swap="innerHTML" data-tab data-clear-targets="#music-task-panel,#music-library-panel,#music-library-task-panel"> Music Download </button>
+  <button class="segment-bar__button" hx-get="/ui/music/forms/spotify-library" hx-target="#music-form-panel" hx-swap="innerHTML" data-tab data-clear-targets="#music-task-panel,#music-library-panel,#music-library-task-panel"> Spotify Library </button>
+</section>
+
+<section class="console-grid">
+  <div class="panel" id="music-form-panel">
+    {% include "partials/music_song_form.html" %}
+  </div>
+
+  <div class="panel" id="music-task-panel">
+    {% set empty_title = "No music task yet" %}
+    {% set empty_body = "Submit a song, YouTube, or Spotify workflow to start a queued download or auth-guided process." %}
+    {% include "partials/empty_task_panel.html" %}
+  </div>
+</section>
+
+<section id="music-library-panel" class="music-library-stage"></section>
+<section id="music-library-task-panel" class="music-library-stage"></section>
+
+<section class="card-grid card-grid--three">
+  <article class="note-card">
+    <h3>Batch-friendly input</h3>
+    <p>Single values, multi-line batches, and local input files all normalize to the same backend task flow.</p>
+  </article>
+  <article class="note-card">
+    <h3>Spotify auth flow</h3>
+    <p>User library access is exposed as an explicit browser-auth session so the UI never relies on terminal prompts.</p>
+  </article>
+  <article class="note-card">
+    <h3>Downloader behavior</h3>
+    <p>Temporary artifact mode is the default, but persistent output directories are available when you want files retained on disk.</p>
+  </article>
+</section>
+{% endblock %}

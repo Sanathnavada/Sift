@@ -1,0 +1,28 @@
+<article
+  class="task-card"
+  hx-get="/ui/telegram/runtime"
+  hx-trigger="load, every 5s"
+  hx-swap="outerHTML">
+  <div class="task-card__header">
+    <div>
+      <span class="task-card__kicker">Telegram Runtime</span>
+      <h3>Current status</h3>
+    </div>
+    <span class="status-pill status-pill--{% if status_label == 'running' %}success{% elif status_label == 'queued' %}accent{% else %}muted{% endif %}">
+      {{ status_label }}
+    </span>
+  </div>
+
+  <div class="meta-grid">
+    <div>
+      <span class="meta-grid__label">Queue position</span>
+      <span class="meta-grid__value">{{ task.queue_position if task and task.queue_position else "Now" if task else "Not running" }}</span>
+    </div>
+  </div>
+
+  <div class="button-row">
+    <button class="button" hx-post="/ui/telegram/start" hx-target="#telegram-runtime-panel" hx-swap="innerHTML">Start Agent</button>
+    <button class="button button--ghost" hx-post="/ui/telegram/stop" hx-target="#telegram-runtime-panel" hx-swap="innerHTML">Stop Agent</button>
+    <button class="button button--ghost" hx-get="/ui/telegram/runtime" hx-target="#telegram-runtime-panel" hx-swap="innerHTML">Refresh</button>
+  </div>
+</article>

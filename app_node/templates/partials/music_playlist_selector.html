@@ -1,0 +1,90 @@
+<form
+  class="stack-form"
+  hx-post="/ui/music/user/download/submit"
+  hx-target="{{ playlist_target_id }}"
+  hx-swap="innerHTML"
+  hx-disabled-elt="find button"
+  hx-indicator="find .submit-indicator"
+  data-submit-label="Preparing download...">
+  <div class="field">
+    <label class="label">Select playlists or tracks</label>
+    <div class="playlist-list">
+      {% for playlist in playlist_options %}
+      <details class="playlist-row">
+        <summary class="playlist-row__summary">
+          <span class="playlist-row__chevron" aria-hidden="true"></span>
+          <span class="playlist-row__media">
+            {% if playlist.image_url %}
+            <img src="{{ playlist.image_url }}" alt="" loading="lazy">
+            {% else %}
+            <span class="playlist-row__placeholder"></span>
+            {% endif %}
+          </span>
+          <span class="playlist-row__main">
+            <span class="playlist-row__name">{{ playlist.name }}</span>
+            <span class="playlist-row__meta">{{ playlist.track_count }} tracks</span>
+          </span>
+          <label class="playlist-row__select" onclick="event.stopPropagation()">
+            <input type="checkbox" name="playlists" value="{{ playlist.name }}">
+            <span>Playlist</span>
+          </label>
+        </summary>
+        <div class="track-check-list">
+          <div class="track-list-head">
+            <span></span>
+            <span>Title</span>
+            <span>Album</span>
+            <span>Select</span>
+          </div>
+          {% for track in playlist.tracks %}
+          <label class="track-check">
+            {% if track.image_url %}
+            <img src="{{ track.image_url }}" alt="" loading="lazy">
+            {% else %}
+            <span class="track-check__placeholder"></span>
+            {% endif %}
+            <span class="track-check__main">
+              <strong>{{ track.title }}</strong>
+              <small>
+                {{ track.artist or "Unknown artist" }}
+              </small>
+            </span>
+            <span class="track-check__album">{{ track.album or "Unknown album" }}</span>
+            <span class="track-check__select">
+              <input type="checkbox" name="tracks" value="{{ track.payload }}">
+            </span>
+          </label>
+          {% endfor %}
+        </div>
+      </details>
+      {% endfor %}
+    </div>
+  </div>
+
+  <label class="check-inline">
+    <input type="checkbox" name="download_all" value="true">
+    Download all playlists
+  </label>
+
+  <div class="field-group" data-output-mode-group>
+    <span class="label">Output mode</span>
+    <div class="choice-row">
+      <label class="choice">
+        <input type="radio" name="output_mode" value="temporary" checked>
+        Temporary artifacts
+      </label>
+      <label class="choice">
+        <input type="radio" name="output_mode" value="persistent">
+        Persistent outdir
+      </label>
+    </div>
+  </div>
+
+  <div class="field is-hidden" data-outdir-field>
+    <label class="label" for="playlist-outdir">Output directory</label>
+    <input class="input" type="text" id="playlist-outdir" name="outdir" placeholder="./downloads/spotify_user">
+  </div>
+
+  <button class="button button--wide" type="submit">Download Selected</button>
+  <span class="submit-indicator" aria-live="polite">Submitting...</span>
+</form>

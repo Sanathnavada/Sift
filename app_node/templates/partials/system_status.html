@@ -1,0 +1,11 @@
+<div class="status-grid">
+  {% for card in status_cards %}
+  <article class="status-card">
+    <span class="status-card__label">{{ card.label }}</span>
+    <span class="status-pill status-pill--{{ card.variant }}">{{ card.value }}</span>
+  </article>
+  {% endfor %}
+</div>
+{% if queue_summary %}
+<p class="panel__meta">Queued: {{ queue_summary.queued_jobs }} · Running: {{ queue_summary.running_jobs }}</p>
+{% endif %}
