@@ -15,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 
 from ..auth_sessions import spotify_auth_sessions
 from ..input_resolver import InputResolutionError, resolve_multi_input
+from ..instagram_sessions import SESSION_HEADER
 from ..settings import (
     MEDIA_NODE_ENABLED,
     MUSIC_NODE_ENABLED,
@@ -61,7 +62,11 @@ def _render(request: Request, template_name: str, **context):
         "feature_flags": _feature_flags(),
     }
     base_context.update(context)
-    return templates.TemplateResponse(template_name, base_context)
+    return templates.TemplateResponse(
+        request=request,
+        name=template_name,
+        context=base_context,
+    )
 
 
 def _task_page_url(task_id: str) -> str:
@@ -210,6 +215,7 @@ def _task_view_model(task, *, container_id: str) -> dict:
                         "artist": track.get("artist", ""),
                         "album": track.get("album", ""),
                         "image_url": track.get("image_url", ""),
+                        "duration_ms": track.get("duration_ms", 0),
                     },
                     separators=(",", ":"),
                 )
@@ -517,6 +523,7 @@ async def media_instagram_submit(request: Request):
         raise HTTPException(404, "Media node is disabled.")
     form = await request.form()
     mode = (form.get("instagram_mode") or "posts").strip()
+    session_dir = media_api._session_dir(request.headers.get(SESSION_HEADER))
 
     if mode == "posts":
         try:
@@ -526,7 +533,7 @@ async def media_instagram_submit(request: Request):
 
         task = await submit_bound_job(
             "media.ig_bulk",
-            lambda task: media_api._ig_bulk_job(task.id, urls, None),
+            lambda task: media_api._ig_bulk_job(task.id, urls, None, session_dir),
             submitted_by=_request_client_id(request),
             meta=_media_meta(
                 "Instagram posts",
@@ -535,7 +542,12 @@ async def media_instagram_submit(request: Request):
                 submitted_count=len(urls),
             ),
         )
-        return _render_task_card(request, task.id, title="Media Task", container_id="media-task-panel")
+        return _render_task_card(
+            request,
+            task.id,
+            title="Media Task",
+            container_id="media-instagram-posts-task-panel",
+        )
 
     if mode == "public_profile":
         username = (form.get("username") or "").strip()
@@ -549,7 +561,9 @@ async def media_instagram_submit(request: Request):
 
         task = await submit_bound_job(
             "media.public_user",
-            lambda task: media_api._public_user_job(task.id, username, first_n, None),
+            lambda task: media_api._public_user_job(
+                task.id, username, first_n, None, session_dir
+            ),
             submitted_by=_request_client_id(request),
             meta=_media_meta(
                 "Instagram public profile",
@@ -558,7 +572,12 @@ async def media_instagram_submit(request: Request):
                 submitted_count=first_n,
             ),
         )
-        return _render_task_card(request, task.id, title="Media Task", container_id="media-task-panel")
+        return _render_task_card(
+            request,
+            task.id,
+            title="Media Task",
+            container_id="media-instagram-public-profile-task-panel",
+        )
 
     if mode == "private_collection":
         collection = (form.get("collection") or "").strip()
@@ -567,11 +586,18 @@ async def media_instagram_submit(request: Request):
 
         task = await submit_bound_job(
             "media.private_user",
-            lambda task: media_api._private_user_job(task.id, collection, None, None, None),
+            lambda task: media_api._private_user_job(
+                task.id, collection, None, None, None, session_dir
+            ),
             submitted_by=_request_client_id(request),
             meta=_media_meta("Instagram private collection", "Collection", collection),
         )
-        return _render_task_card(request, task.id, title="Media Task", container_id="media-task-panel")
+        return _render_task_card(
+            request,
+            task.id,
+            title="Media Task",
+            container_id="media-instagram-private-collection-task-panel",
+        )
 
     return _render_error_panel(request, "Unknown Instagram source.")
 
@@ -584,9 +610,10 @@ async def media_post_submit(request: Request):
     url = (form.get("url") or "").strip()
     if not url:
         return _render_error_panel(request, "Instagram post URL is required.")
+    session_dir = media_api._session_dir(request.headers.get(SESSION_HEADER))
     task = await submit_bound_job(
         "media.post",
-        lambda task: media_api._post_job(task.id, url, None),
+        lambda task: media_api._post_job(task.id, url, None, session_dir),
         submitted_by=_request_client_id(request),
         meta=_media_meta("Instagram post", "Post URL", url),
     )
@@ -608,9 +635,12 @@ async def media_public_submit(request: Request):
     except ValueError as exc:
         return _render_error_panel(request, str(exc))
 
+    session_dir = media_api._session_dir(request.headers.get(SESSION_HEADER))
     task = await submit_bound_job(
         "media.public_user",
-        lambda task: media_api._public_user_job(task.id, username, first_n, None),
+        lambda task: media_api._public_user_job(
+            task.id, username, first_n, None, session_dir
+        ),
         submitted_by=_request_client_id(request),
         meta=_media_meta(
             "Public profile scrape",
@@ -631,9 +661,12 @@ async def media_private_submit(request: Request):
     if not collection:
         return _render_error_panel(request, "Collection name is required.")
 
+    session_dir = media_api._session_dir(request.headers.get(SESSION_HEADER))
     task = await submit_bound_job(
         "media.private_user",
-        lambda task: media_api._private_user_job(task.id, collection, None, None, None),
+        lambda task: media_api._private_user_job(
+            task.id, collection, None, None, None, session_dir
+        ),
         submitted_by=_request_client_id(request),
         meta=_media_meta("Private collection scrape", "Collection", collection),
     )
@@ -650,9 +683,10 @@ async def media_bulk_submit(request: Request):
     except (InputResolutionError, ValueError) as exc:
         return _render_error_panel(request, str(exc))
 
+    session_dir = media_api._session_dir(request.headers.get(SESSION_HEADER))
     task = await submit_bound_job(
         "media.ig_bulk",
-        lambda task: media_api._ig_bulk_job(task.id, urls, None),
+        lambda task: media_api._ig_bulk_job(task.id, urls, None, session_dir),
         submitted_by=_request_client_id(request),
         meta=_media_meta(
             "Bulk Instagram scrape",
@@ -848,6 +882,37 @@ async def music_user_download_submit(request: Request):
         submitted_by=_request_client_id(request),
     )
     return _render_task_card(request, task.id, title="Music Task", container_id="music-library-task-panel")
+
+
+@router.post("/ui/music/candidates/download", response_class=HTMLResponse)
+async def music_candidate_download_submit(request: Request):
+    if not MUSIC_NODE_ENABLED:
+        raise HTTPException(404, "Music node is disabled.")
+    form = await request.form()
+    urls = [value.strip() for value in form.getlist("candidate_urls") if value.strip()]
+    container_id = (form.get("container_id") or "music-task-panel").strip()
+    if container_id not in {
+        "music-task-panel",
+        "music-library-task-panel",
+        "task-detail-panel",
+    }:
+        container_id = "music-task-panel"
+    if not urls:
+        return _render_error_panel(request, "Select at least one candidate to download.")
+    if any(not music_api._is_youtube_url(url) for url in urls):
+        return _render_error_panel(request, "One or more selected candidates are invalid.")
+
+    task = await submit_bound_job(
+        "music.candidate_download",
+        lambda task: music_api._candidate_download_job(task.id, urls, None),
+        submitted_by=_request_client_id(request),
+    )
+    return _render_task_card(
+        request,
+        task.id,
+        title="Music Task",
+        container_id=container_id,
+    )
 
 
 @router.get("/ui/tasks/{task_id}/card", response_class=HTMLResponse)

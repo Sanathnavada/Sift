@@ -123,6 +123,38 @@
         {% elif item.resolved_url_count is defined %}
         <span class="result-row__meta">{{ item.resolved_url_count }} match(es)</span>
         {% endif %}
+        {% if item.candidates %}
+        <form
+          class="candidate-list"
+          hx-post="/ui/music/candidates/download"
+          hx-target="{{ playlist_target_id }}"
+          hx-swap="innerHTML"
+          hx-disabled-elt="find button"
+          hx-indicator="find .submit-indicator"
+          data-submit-label="Preparing download...">
+          <input type="hidden" name="container_id" value="{{ playlist_target_id.lstrip('#') }}">
+          {% for candidate in item.candidates %}
+          <label class="candidate-row">
+            <input type="checkbox" name="candidate_urls" value="{{ candidate.url }}">
+            <span>
+              <strong>{{ candidate.title }}</strong>
+              <small>{{ candidate.channel }}{% if candidate.duration %} · {{ candidate.duration }}s{% endif %}</small>
+            </span>
+            <span class="status-pill status-pill--muted">{{ candidate.score }}</span>
+            <a
+              class="button button--ghost button--small"
+              href="{{ candidate.url }}"
+              target="_blank"
+              rel="noreferrer"
+              onclick="event.stopPropagation()">
+              Preview
+            </a>
+          </label>
+          {% endfor %}
+          <button class="button button--wide" type="submit">Download Selected</button>
+          <span class="submit-indicator" aria-live="polite">Submitting...</span>
+        </form>
+        {% endif %}
       </div>
       {% endfor %}
     </div>

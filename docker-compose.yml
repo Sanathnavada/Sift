@@ -1,0 +1,18 @@
+services:
+  gateway:
+    build: .
+    env_file:
+      - path: .env.docker
+        required: false
+    ports:
+      - "8000:8000"
+      - "6080:6080"
+    volumes:
+      - gateway-data:/app/data
+      - gateway-downloads:/app/downloads
+    shm_size: "2gb"
+    restart: unless-stopped
+
+volumes:
+  gateway-data:
+  gateway-downloads:

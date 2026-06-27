@@ -3,8 +3,12 @@ import gc
 import logging
 import warnings
 import os
+import shutil
+import subprocess
 import threading
 from contextlib import contextmanager
+
+import numpy as np
 from PIL import Image
 
 logger = logging.getLogger(__name__)
@@ -25,6 +29,24 @@ try:
 except ImportError:
     logger.error("Error: openai-whisper not installed")
     sys.exit(1)
+
+
+def _resolve_ffmpeg_executable():
+    """Return the system or bundled FFmpeg executable."""
+    system_ffmpeg = shutil.which("ffmpeg")
+    if system_ffmpeg:
+        return system_ffmpeg
+
+    try:
+        import imageio_ffmpeg
+    except ImportError:
+        logger.warning("FFmpeg not found. Audio transcription is unavailable.")
+        return "ffmpeg"
+
+    return imageio_ffmpeg.get_ffmpeg_exe()
+
+
+_FFMPEG_EXECUTABLE = _resolve_ffmpeg_executable()
 
 warnings.filterwarnings("ignore")
 _INFERENCE_LOCK = threading.Lock()
@@ -155,7 +177,29 @@ def run_florence_ocr(image_path, handler):
 def run_whisper_audio(audio_path, handler):
     """Run Whisper transcription"""
     try:
-        result = handler.audio_model.transcribe(audio_path)
+        command = [
+            _FFMPEG_EXECUTABLE,
+            "-nostdin",
+            "-threads", "0",
+            "-i", audio_path,
+            "-f", "s16le",
+            "-ac", "1",
+            "-acodec", "pcm_s16le",
+            "-ar", str(whisper.audio.SAMPLE_RATE),
+            "-",
+        ]
+        decoded_audio = subprocess.run(
+            command,
+            capture_output=True,
+            check=True,
+        ).stdout
+        waveform = (
+            np.frombuffer(decoded_audio, np.int16)
+            .flatten()
+            .astype(np.float32)
+            / 32768.0
+        )
+        result = handler.audio_model.transcribe(waveform)
         return result["text"].strip()
     except Exception as e:
         logger.warning(f"Audio error on {audio_path}: {e}")

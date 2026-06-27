@@ -64,6 +64,13 @@ DELETE http://127.0.0.1:8000/api/tasks/{task_id}
 
 MEDIA ENDPOINTS
 
+Instagram requests require a stable browser/client session header:
+X-Client-Session-ID: <20-128 character opaque ID>
+
+Reuse the same value for related Instagram requests. Authentication cookies are
+stored server-side for that ID and expire after 12 hours of inactivity. The web
+UI creates this ID automatically for the lifetime of the current browser tab.
+
 1. YouTube media processing
 POST /api/media/youtube
 
@@ -151,12 +158,15 @@ Persistent:
 5. Private saved collection
 POST /api/media/private-user
 
-First run with credentials:
+Optional first run with credentials (API clients only):
 {
   "collection": "Mind",
   "username": "sanath_navada",
   "password": "your_password"
 }
+
+The password is used only for the interactive login attempt and is not persisted.
+Subsequent requests with the same X-Client-Session-ID reuse the saved Instagram cookies.
 
 Subsequent run with cached session:
 {

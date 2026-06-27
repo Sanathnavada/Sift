@@ -2,7 +2,7 @@
   <h3>Instagram</h3>
   <p>Process post URLs, a public profile, or a private saved collection.</p>
 </div>
-<form class="stack-form" hx-post="/ui/media/instagram/submit" hx-target="#media-task-panel" hx-swap="innerHTML" hx-disabled-elt="find button" hx-indicator="find .submit-indicator">
+<form class="stack-form" hx-post="/ui/media/instagram/submit" hx-target="#media-instagram-posts-task-panel" hx-swap="innerHTML" hx-disabled-elt="find button" hx-indicator="find .submit-indicator" data-instagram-mode-form>
   <div class="field-group" data-mode-group="instagram-source">
     <span class="label">Source</span>
     <div class="choice-row">

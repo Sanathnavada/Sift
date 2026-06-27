@@ -7,6 +7,7 @@ class Track:
     artist: str = ""
     album: str = ""
     image_url: str = ""
+    duration_ms: int = 0
     is_dummy: bool = False
 
     @property
@@ -17,6 +18,29 @@ class Track:
         clean = re.sub(r"\s*[\[\(]Remastered[\]\)]", "", clean, flags=re.IGNORECASE)
         clean = re.sub(r"\s-\sFrom\s.*", "", clean, flags=re.IGNORECASE)
         return clean.strip()
+
+    @property
+    def sanitized_album(self) -> str:
+        clean = re.sub(
+            r"\s*[\(\[]?Original Motion Picture Soundtrack[\)\]]?\s*",
+            "",
+            self.album,
+            flags=re.IGNORECASE,
+        )
+        clean = re.sub(
+            r"\s*[\(\[]?(?:Motion Picture|Original) Soundtrack[\)\]]?\s*",
+            "",
+            clean,
+            flags=re.IGNORECASE,
+        )
+        return clean.strip(" -()[]")
+
+    @property
+    def requires_album_match(self) -> bool:
+        return bool(
+            re.search(r"\bfrom\b", self.title, flags=re.IGNORECASE)
+            or re.search(r"\bsoundtrack\b", self.album, flags=re.IGNORECASE)
+        )
 
     @property
     def album_acronym(self) -> str:
@@ -39,11 +63,11 @@ class Track:
         if len(t.split()) <= 1 or len(t) < 4:
             return f'"{t}" {clean_artist} official audio'
 
-        # 3. Soundtrack Logic
-        if self.album and len(t.split()) < 3:
-             return f"{t} {clean_artist} {self.album} audio"
-             
-        return f"{t} {clean_artist} official audio"
+        parts = [f'"{t}"', clean_artist]
+        if self.sanitized_album:
+            parts.append(self.sanitized_album)
+        parts.append("official audio")
+        return " ".join(part for part in parts if part)
 
     def __str__(self):
         return f"{self.title} - {self.artist}"
@@ -55,3 +79,5 @@ class VideoResult:
     channel: str
     duration: int
     url: str
+    rank: int = 0
+    description: str = ""

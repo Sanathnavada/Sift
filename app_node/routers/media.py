@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from ..artifacts import create_job_output_dir, get_artifact_expiry, register_directory_artifacts
 from ..input_resolver import InputResolutionError, resolve_multi_input
+from ..instagram_sessions import InstagramSessionStore, SESSION_HEADER
 from ..settings import MEDIA_NODE_DIR, ROOT_DIR, SCRAPING_PATH
 from ..tasks import append_task_event, submit_bound_job
 
@@ -35,6 +36,7 @@ from media_node.utils import get_content_type  # noqa: E402
 router = APIRouter(prefix="/media", tags=["Media"])
 
 SESSION_ROOT = ROOT_DIR / "data" / "app_node_sessions" / "instagram"
+instagram_sessions = InstagramSessionStore(SESSION_ROOT)
 USER_ARTIFACT_DIR = "_user_downloads"
 MEDIA_DOWNLOAD_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mov", ".m4v"}
 
@@ -154,9 +156,15 @@ def _append_media_item_summary(task_id: str, items: list[dict]) -> dict[str, int
     return counts
 
 
-def _make_public_insta_fetcher(task_id: str) -> YtdlpInstaFetcher:
-    append_task_event(task_id, f"Instagram scraping path: {SCRAPING_PATH}")
-    return YtdlpInstaFetcher(scraping_path=SCRAPING_PATH, session_dir=str(SESSION_ROOT))
+def _session_dir(session_id: str | None) -> Path:
+    try:
+        return instagram_sessions.resolve(session_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+def _make_public_insta_fetcher(session_dir: Path) -> YtdlpInstaFetcher:
+    return YtdlpInstaFetcher(scraping_path=SCRAPING_PATH, session_dir=str(session_dir))
 
 
 class YoutubeRequest(BaseModel):
@@ -235,13 +243,12 @@ def _youtube_job(task_id: str, inputs: list[str], outdir: Optional[str]) -> dict
     )
 
 
-def _public_user_job(task_id: str, username: str, first_n: int, outdir: Optional[str]) -> dict:
+def _public_user_job(task_id: str, username: str, first_n: int, outdir: Optional[str],
+                     session_dir: Path) -> dict:
     job_outdir, output_mode = create_job_output_dir(task_id, "media.public_user", outdir is None, outdir)
-    append_task_event(task_id, "Instagram scraping path: authenticated browser")
-    SESSION_ROOT.mkdir(parents=True, exist_ok=True)
     web = WebCollectionFetcher(
         outdir=str(job_outdir),
-        session_dir=str(SESSION_ROOT),
+        session_dir=str(session_dir),
         username=None,
         password=None,
     )
@@ -271,9 +278,9 @@ def _public_user_job(task_id: str, username: str, first_n: int, outdir: Optional
     )
 
 
-def _post_job(task_id: str, url: str, outdir: Optional[str]) -> dict:
+def _post_job(task_id: str, url: str, outdir: Optional[str], session_dir: Path) -> dict:
     job_outdir, output_mode = create_job_output_dir(task_id, "media.post", outdir is None, outdir)
-    fetcher = _make_public_insta_fetcher(task_id)
+    fetcher = _make_public_insta_fetcher(session_dir)
     items = fetcher.fetch_single_post(url)
     if not items:
         raise RuntimeError(f"Could not fetch post: {url}")
@@ -298,9 +305,10 @@ def _post_job(task_id: str, url: str, outdir: Optional[str]) -> dict:
     )
 
 
-def _ig_bulk_job(task_id: str, urls: list[str], outdir: Optional[str]) -> dict:
+def _ig_bulk_job(task_id: str, urls: list[str], outdir: Optional[str],
+                 session_dir: Path) -> dict:
     job_outdir, output_mode = create_job_output_dir(task_id, "media.ig_bulk", outdir is None, outdir)
-    fetcher = _make_public_insta_fetcher(task_id)
+    fetcher = _make_public_insta_fetcher(session_dir)
     items = fetcher.fetch_bulk(urls)
     if not items:
         raise RuntimeError("No media items fetched from the provided URLs.")
@@ -330,14 +338,14 @@ def _ig_bulk_job(task_id: str, urls: list[str], outdir: Optional[str]) -> dict:
 
 
 def _private_user_job(task_id: str, collection: str, username: Optional[str],
-                      password: Optional[str], outdir: Optional[str]) -> dict:
+                      password: Optional[str], outdir: Optional[str],
+                      session_dir: Path) -> dict:
     job_outdir, output_mode = create_job_output_dir(task_id, "media.private_user", outdir is None, outdir)
-    SESSION_ROOT.mkdir(parents=True, exist_ok=True)
-    if not (SESSION_ROOT / "web_session.json").exists():
+    if not (session_dir / "web_session.json").exists():
         append_task_event(task_id, "Instagram login window opening; check the browser window or taskbar.")
     web = WebCollectionFetcher(
         outdir=str(job_outdir),
-        session_dir=str(SESSION_ROOT),
+        session_dir=str(session_dir),
         username=username,
         password=password,
     )
@@ -405,9 +413,10 @@ async def scrape_public_user(req: PublicUserRequest, request: Request):
     if req.first_n < 1:
         raise HTTPException(400, "first_n must be at least 1.")
 
+    session_dir = _session_dir(request.headers.get(SESSION_HEADER))
     task = await submit_bound_job(
         "media.public_user",
-        lambda task: _public_user_job(task.id, username, req.first_n, req.outdir),
+        lambda task: _public_user_job(task.id, username, req.first_n, req.outdir, session_dir),
         submitted_by=request.client.host if request.client else None,
     )
     return _accepted_response(task)
@@ -419,9 +428,10 @@ async def scrape_post(req: PostRequest, request: Request):
     if not url:
         raise HTTPException(400, "Instagram post URL is required.")
 
+    session_dir = _session_dir(request.headers.get(SESSION_HEADER))
     task = await submit_bound_job(
         "media.post",
-        lambda task: _post_job(task.id, url, req.outdir),
+        lambda task: _post_job(task.id, url, req.outdir, session_dir),
         submitted_by=request.client.host if request.client else None,
     )
     return _accepted_response(task)
@@ -434,9 +444,10 @@ async def scrape_ig_bulk(req: IgBulkRequest, request: Request):
     except InputResolutionError as exc:
         raise HTTPException(400, str(exc)) from exc
 
+    session_dir = _session_dir(request.headers.get(SESSION_HEADER))
     task = await submit_bound_job(
         "media.ig_bulk",
-        lambda task: _ig_bulk_job(task.id, urls, req.outdir),
+        lambda task: _ig_bulk_job(task.id, urls, req.outdir, session_dir),
         submitted_by=request.client.host if request.client else None,
     )
     return _accepted_response(task)
@@ -448,9 +459,12 @@ async def scrape_private_user(req: PrivateUserRequest, request: Request):
     if not collection:
         raise HTTPException(400, "Collection name is required.")
 
+    session_dir = _session_dir(request.headers.get(SESSION_HEADER))
     task = await submit_bound_job(
         "media.private_user",
-        lambda task: _private_user_job(task.id, collection, req.username, req.password, req.outdir),
+        lambda task: _private_user_job(
+            task.id, collection, req.username, req.password, req.outdir, session_dir
+        ),
         submitted_by=request.client.host if request.client else None,
     )
     return _accepted_response(task)

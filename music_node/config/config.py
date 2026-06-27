@@ -16,18 +16,20 @@ from pathlib import Path
 # config.py lives in: <project_root>/config
 BASE_DIR = Path(__file__).parent            
 PROJECT_ROOT = BASE_DIR.parent              
+STATE_DIR = Path(os.getenv("MUSIC_CONFIG_DIR", str(BASE_DIR)))
+STATE_DIR.mkdir(parents=True, exist_ok=True)
 
 PREFERRED_OUTPUT = Path(r"D:\Music")
 ROOT_OUTPUT_DIR = PREFERRED_OUTPUT if PREFERRED_OUTPUT.exists() else PROJECT_ROOT / "Music"
 
-CACHE_FILE = BASE_DIR / "youtube_cache.json"
-DB_FILE = PROJECT_ROOT / "download_history.db"
+CACHE_FILE = STATE_DIR / "youtube_cache.json"
+DB_FILE = STATE_DIR / "download_history.db"
 
-COOKIES_FILE = BASE_DIR / "cookies.txt"
-SPOTIFY_CACHE_PATH = BASE_DIR / ".cache" 
+COOKIES_FILE = STATE_DIR / "cookies.txt"
+SPOTIFY_CACHE_PATH = STATE_DIR / ".cache"
 
 # [FIX] Ensure this is consistent
-SPOTIFY_BACKUP_FILE = BASE_DIR / "spotify_playlists_backup.txt"
+SPOTIFY_BACKUP_FILE = STATE_DIR / "spotify_playlists_backup.txt"
 # --- THE FIX IS HERE ---
 # We removed 'CACHE_DIR' because we don't need a folder.
 # We only ensure the Output Directory exists.
@@ -53,8 +55,8 @@ MUSIC_DOWNLOAD_WORKERS_EPHEMERAL = _env_int_or_auto(
     min(2, MUSIC_DOWNLOAD_WORKERS),
 )
 MAX_WORKERS = YOUTUBE_RESOLVE_WORKERS
-YT_SEARCH_LIMIT = 10
-MIN_CONFIDENCE_SCORE = 40
+YT_SEARCH_LIMIT = 15
+MIN_CONFIDENCE_SCORE = 80
 
 # --- Logging ---
 logging.basicConfig(

@@ -1,5 +1,19 @@
 (function () {
   var spotifyAuthStorageKey = "gateway.spotifyAuthStatusUrl";
+  var clientSessionStorageKey = "gateway.clientSessionId";
+
+  function getClientSessionId() {
+    var sessionId = window.sessionStorage.getItem(clientSessionStorageKey);
+    if (!sessionId) {
+      sessionId = window.crypto.randomUUID
+        ? window.crypto.randomUUID().replace(/-/g, "")
+        : Array.from(window.crypto.getRandomValues(new Uint8Array(24)), function (value) {
+            return value.toString(16).padStart(2, "0");
+          }).join("");
+      window.sessionStorage.setItem(clientSessionStorageKey, sessionId);
+    }
+    return sessionId;
+  }
 
   function updateSpotifyAuthStatus(statusUrl) {
     var target = document.querySelector("#music-task-panel");
@@ -64,12 +78,55 @@
             }
           });
         });
+        if (groupName === "instagram-source") {
+          syncInstagramTaskPanel(container, value);
+        }
       }
 
       radios.forEach(function (radio) {
         radio.addEventListener("change", sync);
       });
       sync();
+    });
+  }
+
+  function ensureInstagramTaskPanels() {
+    var host = document.querySelector("#media-task-panel");
+    if (!host) {
+      return null;
+    }
+    var panels = host.querySelector("[data-instagram-task-panels]");
+    if (panels) {
+      return panels;
+    }
+    host.innerHTML = [
+      '<div data-instagram-task-panels>',
+      '  <div id="media-instagram-posts-task-panel" data-instagram-task-mode="posts">',
+      '    <article class="empty-state"><h3>No post task yet</h3><p>Submit Instagram post or reel URLs to start a task.</p></article>',
+      '  </div>',
+      '  <div id="media-instagram-public-profile-task-panel" class="is-hidden" data-instagram-task-mode="public_profile">',
+      '    <article class="empty-state"><h3>No public profile task yet</h3><p>Submit a public profile to start a task.</p></article>',
+      '  </div>',
+      '  <div id="media-instagram-private-collection-task-panel" class="is-hidden" data-instagram-task-mode="private_collection">',
+      '    <article class="empty-state"><h3>No private collection task yet</h3><p>Submit a saved collection to start a task.</p></article>',
+      '  </div>',
+      '</div>'
+    ].join("");
+    return host.querySelector("[data-instagram-task-panels]");
+  }
+
+  function syncInstagramTaskPanel(form, mode) {
+    if (!form || !form.matches("[data-instagram-mode-form]")) {
+      return;
+    }
+    var panels = ensureInstagramTaskPanels();
+    if (!panels) {
+      return;
+    }
+    var targetId = "media-instagram-" + mode.replace(/_/g, "-") + "-task-panel";
+    form.setAttribute("hx-target", "#" + targetId);
+    panels.querySelectorAll("[data-instagram-task-mode]").forEach(function (panel) {
+      panel.classList.toggle("is-hidden", panel.dataset.instagramTaskMode !== mode);
     });
   }
 
@@ -115,9 +172,24 @@
     initModeGroups(root);
     initTabGroups(root);
     initSpotifyAuthLinks(root);
+    root.querySelectorAll(".button, .segment-bar__button").forEach(function (button) {
+      if (button.dataset.boundClickFeedback) {
+        return;
+      }
+      button.dataset.boundClickFeedback = "true";
+      button.addEventListener("pointerdown", function () {
+        button.classList.add("is-pressed");
+      });
+      ["pointerup", "pointercancel", "pointerleave"].forEach(function (eventName) {
+        button.addEventListener(eventName, function () {
+          button.classList.remove("is-pressed");
+        });
+      });
+    });
   }
 
   document.addEventListener("DOMContentLoaded", function () {
+    getClientSessionId();
     init(document);
     consumeSpotifyAuthStatus();
   });
@@ -134,9 +206,14 @@
   });
 
   document.body.addEventListener("htmx:beforeRequest", function (event) {
+    event.detail.xhr.setRequestHeader("X-Client-Session-ID", getClientSessionId());
     var form = event.target.closest ? event.target.closest("form") : null;
     if (!form) {
       return;
+    }
+    var processingMessage = form.querySelector("[data-processing-message]");
+    if (processingMessage) {
+      processingMessage.classList.add("is-visible");
     }
     form.querySelectorAll('button[type="submit"]').forEach(function (button) {
       button.dataset.originalText = button.textContent;
@@ -149,6 +226,12 @@
     var form = event.target.closest ? event.target.closest("form") : null;
     if (!form) {
       return;
+    }
+    if (!event.detail.successful) {
+      var processingMessage = form.querySelector("[data-processing-message]");
+      if (processingMessage) {
+        processingMessage.classList.remove("is-visible");
+      }
     }
     form.querySelectorAll('button[type="submit"]').forEach(function (button) {
       if (button.dataset.originalText) {

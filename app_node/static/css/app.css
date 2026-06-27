@@ -279,6 +279,12 @@ pre,
   box-shadow: 0 6px 14px rgba(56, 189, 248, 0.18);
 }
 
+.button.is-pressed,
+.segment-bar__button.is-pressed {
+  filter: brightness(0.86);
+  transform: translateY(1px) scale(0.99);
+}
+
 .button:disabled,
 .button.is-submitting {
   cursor: wait;
@@ -480,6 +486,59 @@ pre,
   opacity: 0.72;
   transform: none;
   box-shadow: none;
+}
+
+.processing-message {
+  display: none;
+  margin: 0;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.84rem;
+}
+
+.processing-message.is-visible {
+  display: block;
+}
+
+.candidate-list {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.candidate-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  color: var(--text);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.candidate-row > input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.candidate-row:hover {
+  border-color: rgba(56, 189, 248, 0.45);
+  background: rgba(56, 189, 248, 0.06);
+}
+
+.candidate-row span:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.candidate-row small {
+  color: var(--muted);
 }
 
 .field,

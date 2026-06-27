@@ -93,7 +93,7 @@ class SpotifyProvider:
                 playlist_id,
                 offset=offset,
                 limit=100,
-                fields="items(track(name,artists(name),album(name,images))),next",
+                fields="items(track(name,duration_ms,artists(name),album(name,images))),next",
             )
             if not res.get("items"):
                 break
@@ -109,6 +109,7 @@ class SpotifyProvider:
                             artist=artist,
                             album=album.get("name", ""),
                             image_url=self._image_url(album.get("images")),
+                            duration_ms=track.get("duration_ms") or 0,
                         )
                     )
 
@@ -132,7 +133,14 @@ class SpotifyProvider:
             for track in res["items"]:
                 if track:
                     artist = track["artists"][0]["name"] if track["artists"] else "Unknown"
-                    tracks.append(Track(title=track["name"], artist=artist, album=album_name))
+                    tracks.append(
+                        Track(
+                            title=track["name"],
+                            artist=artist,
+                            album=album_name,
+                            duration_ms=track.get("duration_ms") or 0,
+                        )
+                    )
 
             if not res.get("next"):
                 break
@@ -148,6 +156,7 @@ class SpotifyProvider:
             artist=artist,
             album=album.get("name", ""),
             image_url=self._image_url(album.get("images")),
+            duration_ms=track.get("duration_ms") or 0,
         )
 
     def _fetch_playlist_batch(

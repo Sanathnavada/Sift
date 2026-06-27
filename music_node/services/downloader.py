@@ -17,6 +17,18 @@ from config.config import (
 
 logger = get_logger("Downloader")
 
+
+def _resolve_ffmpeg_tools() -> tuple[Optional[str], bool]:
+    ffmpeg = shutil.which("ffmpeg")
+    ffprobe = shutil.which("ffprobe")
+    if ffmpeg:
+        return ffmpeg, bool(ffprobe)
+    try:
+        import imageio_ffmpeg
+    except ImportError:
+        return None, False
+    return imageio_ffmpeg.get_ffmpeg_exe(), False
+
 class DownloadHistoryDB:
     def __init__(self):
         self.conn = sqlite3.connect(DB_FILE, check_same_thread=False)
@@ -136,13 +148,26 @@ class MusicDownloader:
             'no_warnings': True,
             'ignoreerrors': True,
             'cookiefile': str(COOKIES_FILE),
-            'writethumbnail': True,
-            'addmetadata': True,
-            'postprocessors': [{'key': 'FFmpegMetadata'}, {'key': 'EmbedThumbnail'}],
             'overwrites': self.ephemeral, 
             # Optional: Redirect yt-dlp cache to prevent root folder creation
             # 'cachedir': False, 
         }
+        ffmpeg_location, has_ffprobe = _resolve_ffmpeg_tools()
+        if ffmpeg_location:
+            opts["ffmpeg_location"] = ffmpeg_location
+        if has_ffprobe:
+            opts.update({
+                "writethumbnail": True,
+                "addmetadata": True,
+                "postprocessors": [
+                    {"key": "FFmpegMetadata"},
+                    {"key": "EmbedThumbnail"},
+                ],
+            })
+        else:
+            logger.warning(
+                "FFprobe not found; downloading audio without embedded metadata or thumbnail."
+            )
 
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:

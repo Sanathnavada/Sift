@@ -161,7 +161,7 @@ class PlaylistArchitect:
         # 4. THE FILTERS (Negative Keywords)
         # ---------------------------------------------------------
         # We want the original recording, not a reinterpretation.
-        bad_words = ["cover", "remix", "live", "concert", "reaction", "review", "tutorial", "lesson", "karaoke", "instrumental"]
+        bad_words = ["cover", "remix", "live", "concert", "reaction", "review", "tutorial", "lesson", "karaoke", "instrumental", "making of", "parody", "tribute", "demo", "bootleg", "acoustic", "rehearsal"]
         
         for word in bad_words:
             # If the original song title *contains* "Remix" or "Live", we allow it.

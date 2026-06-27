@@ -82,9 +82,9 @@ class WebCollectionFetcher:
                 # Login form is visible — fill it automatically
                 if self.username and self.password:
                     page.fill('input[name="username"]', self.username, timeout=10_000)
-                    time.sleep(random.uniform(0.5, 1.0))
+                    page.wait_for_timeout(random.randint(500, 1_000))
                     page.fill('input[name="password"]', self.password, timeout=10_000)
-                    time.sleep(random.uniform(0.3, 0.7))
+                    page.wait_for_timeout(random.randint(300, 700))
                     page.click('button[type="submit"]', timeout=10_000)
                     logger.info("Credentials submitted. Handle any 2FA / challenge in the browser window...")
                 else:
@@ -99,13 +99,12 @@ class WebCollectionFetcher:
                 page.wait_for_url(lambda url: "/accounts/login/" not in url, timeout=120_000)
             except PlaywrightTimeout:
                 logger.error("Login timed out after 2 minutes.")
-                browser.close()
                 raise RuntimeError("Instagram login timed out after 2 minutes.")
 
             logger.info("✓ Reached Instagram home feed.")
 
             # Give Instagram a moment to set all cookies
-            time.sleep(2)
+            page.wait_for_timeout(2_000)
             raw_cookies = context.cookies()
 
 
@@ -115,18 +114,12 @@ class WebCollectionFetcher:
         missing  = required - cookies.keys()
         if missing:
             logger.error(f"Login may have failed — missing cookies: {missing}")
-            browser.close()
             raise RuntimeError(f"Instagram login may have failed; missing cookies: {sorted(missing)}")
 
         # Resolve and store username so we don't need it on future runs
         if not self.username:
-            try:
-                self.username = self._resolve_username(cookies, page=page)
-            except Exception:
-                browser.close()
-                raise
+            self.username = self._resolve_username(cookies)
         cookies["_ig_username"] = self.username
-        browser.close()
 
         logger.info(f"✓ Browser session established for @{self.username}.")
         return cookies
@@ -194,6 +187,11 @@ class WebCollectionFetcher:
         if os.path.exists(self.session_file):
             with open(self.session_file) as f:
                 data = json.load(f)
+            if data.get("sessionid") and data.get("csrftoken"):
+                if not self.username:
+                    self.username = data.get("_ig_username")
+                logger.info("Reusing cached Instagram browser session.")
+                return data
             # Restore username from cache if not supplied on the command line
             if not self.username:
                 self.username = data.get("_ig_username")
@@ -327,7 +325,7 @@ class WebCollectionFetcher:
 
             page.on("response", on_response)
             page.goto(f"{_WEB_BASE}/{username}/", wait_until="domcontentloaded", timeout=60_000)
-            time.sleep(3)
+            page.wait_for_timeout(3_000)
 
             stall = 0
             prev_count = 0
@@ -339,18 +337,17 @@ class WebCollectionFetcher:
                     add_url(href)
 
                 if limit and len(media_items) >= limit:
-                    browser.close()
-                    return media_items[:limit]
+                    break
 
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                time.sleep(2)
+                page.wait_for_timeout(2_000)
                 if len(media_items) == prev_count:
                     stall += 1
                 else:
                     stall = 0
                 prev_count = len(media_items)
 
-            browser.close()
+            page.remove_listener("response", on_response)
 
         if limit:
             fallback_urls = fallback_urls[:max(limit - len(media_items), 0)]
@@ -474,21 +471,21 @@ class WebCollectionFetcher:
             url  = f"{_WEB_BASE}/{self.username}/saved/{slug}/{col_id}/"
             logger.info(f"Navigating to: {url}")
             page.goto(url, wait_until="domcontentloaded")
-            time.sleep(3)
+            page.wait_for_timeout(3_000)
 
             # Scroll to load all items
             prev_count = 0
             stall = 0
             while stall < 3:
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                time.sleep(2)
+                page.wait_for_timeout(2_000)
                 if len(media_items) == prev_count:
                     stall += 1
                 else:
                     stall = 0
                 prev_count = len(media_items)
 
-            browser.close()
+            page.remove_listener("response", on_response)
 
         logger.info(f"✓ Fetched {len(media_items)} posts from collection via browser interception.")
         return self._slice(media_items, first_n, last_n)

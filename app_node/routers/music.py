@@ -97,6 +97,11 @@ class UserDownloadRequest(BaseModel):
     outdir: Optional[str] = None
 
 
+class CandidateDownloadRequest(BaseModel):
+    urls: list[str]
+    outdir: Optional[str] = None
+
+
 class SpotifyAuthCompleteRequest(BaseModel):
     auth_session_id: str
     code: Optional[str] = None
@@ -143,6 +148,7 @@ def _song_job(task_id: str, queries: list[str], outdir: Optional[str]) -> dict:
     items = []
     completed_count = 0
     failed_count = 0
+    needs_review_count = 0
 
     for query in queries:
         try:
@@ -164,6 +170,11 @@ def _song_job(task_id: str, queries: list[str], outdir: Optional[str]) -> dict:
                 resolution_data = resolver.resolve_all(playlists)
                 urls = [url for data in resolution_data.values() for url in data.get("urls", [])]
                 if not urls:
+                    review_items = _candidate_items(resolution_data)
+                    if review_items:
+                        items.extend(review_items)
+                        needs_review_count += len(review_items)
+                        continue
                     raise RuntimeError("No YouTube matches were found for this Spotify link.")
 
                 downloader = MusicDownloader(ephemeral=(output_mode == "ephemeral"), outdir=job_outdir)
@@ -178,9 +189,18 @@ def _song_job(task_id: str, queries: list[str], outdir: Optional[str]) -> dict:
                 })
             else:
                 track = Track(title=query, is_dummy=True)
-                url, err = resolver._search_single_with_retry(track)
+                resolution = resolver._resolve_track(track)
+                url = resolution["url"]
                 if not url:
-                    raise RuntimeError(err)
+                    items.append({
+                        "input": query,
+                        "input_type": "search_query",
+                        "status": "needs review",
+                        "error": resolution["error"],
+                        "candidates": resolution["candidates"],
+                    })
+                    needs_review_count += 1
+                    continue
 
                 downloader = MusicDownloader(ephemeral=(output_mode == "ephemeral"), outdir=job_outdir)
                 download_result = downloader.download_all({"Single Downloads": [url]})
@@ -199,7 +219,7 @@ def _song_job(task_id: str, queries: list[str], outdir: Optional[str]) -> dict:
             failed_count += 1
 
     artifacts = register_directory_artifacts(task_id, job_outdir)
-    _raise_if_all_failed(completed_count, failed_count, items)
+    _raise_if_all_failed(completed_count + needs_review_count, failed_count, items)
     return _build_result(
         task_id=task_id,
         message="Completed song download request",
@@ -209,6 +229,7 @@ def _song_job(task_id: str, queries: list[str], outdir: Optional[str]) -> dict:
             "submitted_count": len(queries),
             "completed_count": completed_count,
             "failed_count": failed_count,
+            "needs_review_count": needs_review_count,
         },
         artifacts=artifacts,
         items=items,
@@ -222,6 +243,7 @@ def _yt_job(task_id: str, inputs: list[str], outdir: Optional[str]) -> dict:
     items = []
     completed_count = 0
     failed_count = 0
+    needs_review_count = 0
 
     for input_str in inputs:
         input_type = "youtube_url" if _is_youtube_url(input_str) else "search_query"
@@ -229,10 +251,17 @@ def _yt_job(task_id: str, inputs: list[str], outdir: Optional[str]) -> dict:
             url = input_str
         else:
             track = Track(title=input_str, is_dummy=True)
-            url, err = resolver._search_single_with_retry(track)
+            resolution = resolver._resolve_track(track)
+            url = resolution["url"]
             if not url:
-                items.append({"input": input_str, "status": "failed", "error": err})
-                failed_count += 1
+                items.append({
+                    "input": input_str,
+                    "input_type": "search_query",
+                    "status": "needs_review",
+                    "error": resolution["error"],
+                    "candidates": resolution["candidates"],
+                })
+                needs_review_count += 1
                 continue
 
         downloader = MusicDownloader(ephemeral=(output_mode == "ephemeral"), outdir=job_outdir)
@@ -248,7 +277,7 @@ def _yt_job(task_id: str, inputs: list[str], outdir: Optional[str]) -> dict:
         completed_count += 1
 
     artifacts = register_directory_artifacts(task_id, job_outdir)
-    _raise_if_all_failed(completed_count, failed_count, items)
+    _raise_if_all_failed(completed_count + needs_review_count, failed_count, items)
     return _build_result(
         task_id=task_id,
         message="Completed YouTube audio request",
@@ -258,6 +287,7 @@ def _yt_job(task_id: str, inputs: list[str], outdir: Optional[str]) -> dict:
             "submitted_count": len(inputs),
             "completed_count": completed_count,
             "failed_count": failed_count,
+            "needs_review_count": needs_review_count,
         },
         artifacts=artifacts,
         items=items,
@@ -280,6 +310,7 @@ def _link_job(task_id: str, urls: list[str], outdir: Optional[str]) -> dict:
             track_count = sum(len(tracks) for tracks in playlists.values())
             append_task_event(task_id, f"Resolved Spotify metadata: {track_count} track(s)")
             resolution_data = resolver.resolve_all(playlists)
+            review_items = _candidate_items(resolution_data)
             resolved_url_count = 0
             download_batch_count = 0
             downloader = MusicDownloader(ephemeral=(output_mode == "ephemeral"), outdir=job_outdir)
@@ -294,6 +325,10 @@ def _link_job(task_id: str, urls: list[str], outdir: Optional[str]) -> dict:
                     resolved_url_count += len(playlist_urls)
                     download_batch_count += 1
 
+            if resolved_url_count == 0 and review_items:
+                items.extend(review_items)
+                failed_count += 1
+                continue
             if resolved_url_count == 0:
                 raise RuntimeError("No YouTube matches were found for this Spotify link.")
 
@@ -348,6 +383,7 @@ def _user_library_job() -> dict:
                             "artist": track.artist,
                             "album": track.album,
                             "image_url": track.image_url,
+                            "duration_ms": track.duration_ms,
                         }
                         for index, track in enumerate(tracks)
                     ],
@@ -381,6 +417,7 @@ def _track_from_payload(value: str) -> Track:
         artist=(payload.get("artist") or "").strip(),
         album=(payload.get("album") or "").strip(),
         image_url=(payload.get("image_url") or "").strip(),
+        duration_ms=int(payload.get("duration_ms") or 0),
     )
 
 
@@ -408,6 +445,48 @@ def _dedupe_playlists(playlists: dict[str, list[Track]]) -> tuple[dict[str, list
         if unique_tracks:
             deduped[name] = unique_tracks
     return deduped, duplicate_count
+
+
+def _candidate_items(resolution_data: dict[str, dict]) -> list[dict]:
+    items = []
+    for playlist_name, data in resolution_data.items():
+        for failure in data.get("failed", []):
+            track = failure["track"]
+            items.append({
+                "input": f"{track.title} - {track.artist}",
+                "status": "needs review",
+                "error": failure["error"],
+                "playlist_name": playlist_name,
+                "candidates": failure.get("candidates", []),
+            })
+    return items
+
+
+def _candidate_download_job(
+    task_id: str,
+    urls: list[str],
+    outdir: Optional[str],
+) -> dict:
+    job_outdir, output_mode = create_job_output_dir(
+        task_id,
+        "music.candidate_download",
+        outdir is None,
+        outdir,
+    )
+    downloader = MusicDownloader(
+        ephemeral=(output_mode == "ephemeral"),
+        outdir=job_outdir,
+    )
+    download_result = downloader.download_all({"Selected Candidates": urls})
+    artifacts = register_directory_artifacts(task_id, job_outdir)
+    return _build_result(
+        task_id=task_id,
+        message="Completed selected candidate download",
+        input_payload={"urls": urls},
+        output_payload={"output_mode": output_mode, "outdir": str(job_outdir)},
+        stats={"submitted_count": len(urls), **download_result["stats"]},
+        artifacts=artifacts,
+    )
 
 
 def _user_download_job(
@@ -453,6 +532,7 @@ def _user_download_job(
 
     resolver = YouTubeResolver()
     resolution_data = resolver.resolve_all(playlists)
+    candidate_items = _candidate_items(resolution_data)
 
     download_batch_count = 0
     resolved_url_count = 0
@@ -479,8 +559,10 @@ def _user_download_job(
             "resolved_url_count": resolved_url_count,
             "download_batch_count": download_batch_count,
             "duplicate_track_count": duplicate_count,
+            "needs_review_count": len(candidate_items),
         },
         artifacts=artifacts,
+        items=candidate_items,
     )
 
 
@@ -701,6 +783,19 @@ async def download_user_playlists(req: UserDownloadRequest, request: Request):
     task = await submit_bound_job(
         "music.user_download",
         lambda task: _user_download_job(task.id, selected, req.outdir, req.tracks),
+        submitted_by=request.client.host if request.client else None,
+    )
+    return _accepted_response(task)
+
+
+@router.post("/candidate-download")
+async def download_candidates(req: CandidateDownloadRequest, request: Request):
+    urls = [url.strip() for url in req.urls if _is_youtube_url(url.strip())]
+    if not urls or len(urls) != len(req.urls):
+        raise HTTPException(400, "Select at least one valid YouTube candidate.")
+    task = await submit_bound_job(
+        "music.candidate_download",
+        lambda task: _candidate_download_job(task.id, urls, req.outdir),
         submitted_by=request.client.host if request.client else None,
     )
     return _accepted_response(task)

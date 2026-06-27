@@ -201,7 +201,6 @@ def main():
     # ------------------------------------------------------------------ #
     from insta.ytdlp_fetcher import YtdlpInstaFetcher
     scraping_path = os.getenv("SCRAPING_PATH", "playwright")
-    logger.info(f"Instagram scraping path: {scraping_path}")
     fetcher = YtdlpInstaFetcher(scraping_path=scraping_path, session_dir=args.outdir)
 
     if args.ig_bulk:

@@ -319,8 +319,7 @@ class YtdlpInstaFetcher:
                     add_url(href)
 
                 if limit and len(items) >= limit:
-                    browser.close()
-                    return items[:limit]
+                    break
 
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 page.wait_for_timeout(2_000)
@@ -330,7 +329,7 @@ class YtdlpInstaFetcher:
                     stall = 0
                 previous_count = len(items)
 
-            browser.close()
+            page.remove_listener("response", on_response)
 
         if limit:
             fallback_urls = fallback_urls[:max(limit - len(items), 0)]
@@ -376,21 +375,22 @@ class YtdlpInstaFetcher:
                 for href in self._extract_post_hrefs(page):
                     add_url(href)
                     if limit and len(ordered) >= limit:
-                        browser.close()
-                        return ordered[:limit]
+                        break
+
+                if limit and len(ordered) >= limit:
+                    break
 
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 page.wait_for_timeout(2_000)
                 if limit and len(ordered) >= limit:
-                    browser.close()
-                    return ordered[:limit]
+                    break
                 if len(ordered) == previous_count:
                     stall += 1
                 else:
                     stall = 0
                 previous_count = len(ordered)
 
-            browser.close()
+            page.remove_listener("response", on_response)
 
         return ordered[:limit] if limit else ordered
 
@@ -424,7 +424,7 @@ class YtdlpInstaFetcher:
             page.on("response", on_response)
             page.goto(url, wait_until="domcontentloaded", timeout=60_000)
             page.wait_for_timeout(4_000)
-            browser.close()
+            page.remove_listener("response", on_response)
 
         return items
 

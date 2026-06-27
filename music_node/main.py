@@ -290,8 +290,9 @@ def main():
         # 2. Print Resolution Failures (Detailed)
         if failed_items:
             print("\n   ❌ Failed to Find Matches for:")
-            for t, reason in failed_items:
-                print(f"      - {t.title} ({t.artist}) -> {reason}")
+            for failure in failed_items:
+                track = failure["track"]
+                print(f"      - {track.title} ({track.artist}) -> {failure['error']}")
 
         print(f"✅ Playlist '{p_name}' Complete.\n")
 
