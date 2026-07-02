@@ -6,7 +6,8 @@
   hx-disabled-elt="find button"
   hx-indicator="find .submit-indicator"
   data-submit-label="Preparing download..."
-  data-processing-form>
+  data-processing-form
+  data-reset-music-selection-on-success>
   <div class="field">
     <label class="label">Select playlists or tracks</label>
     <div class="playlist-list">
@@ -71,5 +72,8 @@
   <span class="submit-indicator" aria-live="polite">Submitting...</span>
   <p class="processing-message" data-processing-message aria-live="polite">
     Your request is being processed below. Please wait...
+  </p>
+  <p class="processing-message" data-selection-reset-message aria-live="polite">
+    Selection cleared for this playlist view. Completed downloads stay available in Session Downloads.
   </p>
 </form>

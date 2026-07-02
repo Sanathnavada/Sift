@@ -7,25 +7,61 @@
   <p>Download public music inputs or connect Spotify to work from your personal playlists.</p>
 </section>
 
-<section class="segment-bar" data-tab-group>
-  <button class="segment-bar__button is-active" hx-get="/ui/music/forms/download" hx-target="#music-form-panel" hx-swap="innerHTML" data-tab data-clear-targets="#music-task-panel,#music-library-panel,#music-library-task-panel"> Music Download </button>
-  <button class="segment-bar__button" hx-get="/ui/music/forms/spotify-library" hx-target="#music-form-panel" hx-swap="innerHTML" data-tab data-clear-targets="#music-task-panel,#music-library-panel,#music-library-task-panel"> Spotify Library </button>
+<section class="segment-bar" data-tab-group data-workspace="music">
+  <button
+    class="segment-bar__button {% if music_active_form != 'spotify-library' %}is-active{% endif %}"
+    hx-get="/ui/music/forms/download"
+    hx-target="#music-form-panel"
+    hx-swap="innerHTML"
+    data-tab
+    data-workspace-mode="download">
+    Music Download
+  </button>
+  <button
+    class="segment-bar__button {% if music_active_form == 'spotify-library' %}is-active{% endif %}"
+    hx-get="/ui/music/forms/spotify-library"
+    hx-target="#music-form-panel"
+    hx-swap="innerHTML"
+    data-tab
+    data-workspace-mode="spotify-library">
+    Spotify Library
+  </button>
 </section>
 
 <section class="console-grid">
   <div class="panel" id="music-form-panel">
-    {% include "partials/music_song_form.html" %}
+    {% include music_form_template %}
   </div>
 
-  <div class="panel" id="music-task-panel">
-    {% set empty_title = "No music task yet" %}
-    {% set empty_body = "Submit a song, YouTube, or Spotify workflow to start a queued download or auth-guided process." %}
-    {% include "partials/empty_task_panel.html" %}
+  <div
+    class="panel {% if music_active_form == 'spotify-library' %}is-hidden{% endif %}"
+    id="music-task-panel"
+    data-music-task-mode="download">
+    {{ music_task_panel_html|safe }}
+  </div>
+
+  <div
+    class="panel {% if music_active_form != 'spotify-library' %}is-hidden{% endif %}"
+    id="music-library-auth-panel"
+    data-music-task-mode="spotify-library">
+    {{ music_library_auth_panel_html|safe }}
   </div>
 </section>
 
-<section id="music-library-panel" class="music-library-stage"></section>
-<section id="music-library-task-panel" class="music-library-stage"></section>
+<section
+  id="music-library-panel"
+  class="music-library-stage {% if music_active_form != 'spotify-library' %}is-hidden{% endif %}"
+  data-music-task-mode="spotify-library">
+  {{ music_library_panel_html|safe }}
+</section>
+<section
+  id="music-library-task-panel"
+  class="music-library-stage {% if music_active_form != 'spotify-library' %}is-hidden{% endif %}"
+  data-music-task-mode="spotify-library">
+  {{ music_library_task_panel_html|safe }}
+</section>
+
+{% include "partials/music_download_tray.html" %}
 
 <section class="card-grid card-grid--three">
   <article class="note-card">

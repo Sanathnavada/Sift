@@ -1,0 +1,32 @@
+services:
+  gateway:
+    env_file:
+      - path: .env.docker
+        required: false
+
+    environment:
+      DISPLAY: ":99"
+      NOVNC_ENABLED: "true"
+      INSTAGRAM_AUTH_BROWSER_ENABLED: "true"
+      INSTAGRAM_AUTH_TIMEOUT_SECONDS: "300"
+      NOVNC_PUBLIC_URL: "http://localhost:6080/vnc.html?autoconnect=true&resize=scale"
+      NOVNC_PORT: "6080"
+      VNC_PORT: "5900"
+      VNC_RESOLUTION: "1920x1080x24"
+      HF_HOME: "/app/data/model_cache/huggingface"
+      HF_HUB_CACHE: "/app/data/model_cache/huggingface/hub"
+      HF_HUB_ETAG_TIMEOUT: "10"
+      HF_HUB_DOWNLOAD_TIMEOUT: "30"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+
+    command:
+      [
+        "python",
+        "-m",
+        "uvicorn",
+        "app_node.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000"
+      ]

@@ -1,0 +1,36 @@
+<section
+  id="music-download-tray"
+  class="panel music-download-tray"
+  {% if music_download_tray_oob %}hx-swap-oob="innerHTML"{% endif %}>
+  <div class="section-head section-head--compact">
+    <div>
+      <span class="eyebrow">Session downloads</span>
+      <h3>Available music downloads</h3>
+    </div>
+    {% if music_downloads %}
+    <span class="status-pill status-pill--success">{{ music_downloads|length }} ready</span>
+    {% else %}
+    <span class="status-pill status-pill--muted">empty</span>
+    {% endif %}
+  </div>
+
+  {% if music_downloads %}
+  <p class="panel__meta">
+    These files were downloaded in this browser session. Review downloads are appended here instead of replacing earlier files.
+  </p>
+  <div class="artifact-list music-download-list">
+    {% for item in music_downloads %}
+    <a class="artifact-row" href="{{ item.download_url }}" download="{{ item.name }}">
+      <span class="artifact-row__name">{{ item.name }}</span>
+      <span class="artifact-row__meta">{{ item.task_label }}</span>
+      <span class="artifact-row__meta">{{ (item.size_bytes / 1024) | round(1) }} KB</span>
+      <span class="artifact-row__action">Download</span>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="panel__meta">
+    Completed music downloads will be made available here for the duration of your browser session. Once you close your browser, these files will be removed from the tray.
+  </p>
+  {% endif %}
+</section>

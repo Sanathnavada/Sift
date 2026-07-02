@@ -40,6 +40,12 @@ def _accepted_response(task) -> JSONResponse:
             "task_id": task.id,
             "status": task.status,
             "queue_position": task.queue_position,
+            "lane": task.meta.get("lane"),
+            "lane_label": task.meta.get("lane_label"),
+            "queue_message": task.meta.get("queue_message"),
+            "estimated_wait_seconds": task.meta.get("estimated_wait_seconds"),
+            "estimated_runtime_seconds": task.meta.get("estimated_runtime_seconds"),
+            "estimated_total_seconds": task.meta.get("estimated_total_seconds"),
             "poll_url": f"/api/tasks/{task.id}",
         },
     )
@@ -577,6 +583,12 @@ async def download_song(req: SongRequest, request: Request):
         "music.song",
         lambda task: _song_job(task.id, queries, req.outdir),
         submitted_by=request.client.host if request.client else None,
+        meta={
+            "workflow_label": "Music download",
+            "item_label": "Input",
+            "item_detail": f"{queries[0]} + {len(queries) - 1} more" if len(queries) > 1 else queries[0],
+            "submitted_count": len(queries),
+        },
     )
     return _accepted_response(task)
 
@@ -592,6 +604,12 @@ async def download_yt(req: YtRequest, request: Request):
         "music.yt",
         lambda task: _yt_job(task.id, inputs, req.outdir),
         submitted_by=request.client.host if request.client else None,
+        meta={
+            "workflow_label": "YouTube audio download",
+            "item_label": "Input",
+            "item_detail": f"{inputs[0]} + {len(inputs) - 1} more" if len(inputs) > 1 else inputs[0],
+            "submitted_count": len(inputs),
+        },
     )
     return _accepted_response(task)
 
@@ -607,6 +625,12 @@ async def download_link(req: LinkRequest, request: Request):
         "music.link",
         lambda task: _link_job(task.id, urls, req.outdir),
         submitted_by=request.client.host if request.client else None,
+        meta={
+            "workflow_label": "Spotify link download",
+            "item_label": "Spotify URL",
+            "item_detail": f"{urls[0]} + {len(urls) - 1} more" if len(urls) > 1 else urls[0],
+            "submitted_count": len(urls),
+        },
     )
     return _accepted_response(task)
 
@@ -662,7 +686,7 @@ def _spotify_callback_html(session, message: str) -> HTMLResponse:
             "if (window.opener && !window.opener.closed) {"
             "  try {"
             "    if (window.opener.htmx) {"
-            "      window.opener.htmx.ajax('GET', statusUrl, {target:'#music-task-panel', swap:'innerHTML'});"
+            "      window.opener.htmx.ajax('GET', statusUrl, {target:'#music-library-auth-panel', swap:'innerHTML'});"
             "    } else {"
             "      window.opener.localStorage.setItem('gateway.spotifyAuthStatusUrl', statusUrl);"
             "    }"
@@ -761,6 +785,12 @@ async def get_user_playlists(request: Request):
         "music.user_playlists",
         lambda task: _user_library_job(),
         submitted_by=request.client.host if request.client else None,
+        meta={
+            "workflow_label": "Spotify library",
+            "item_label": "Library",
+            "item_detail": "Fetch playlists and tracks",
+            "submitted_count": 1,
+        },
     )
     return _accepted_response(task)
 
@@ -784,6 +814,12 @@ async def download_user_playlists(req: UserDownloadRequest, request: Request):
         "music.user_download",
         lambda task: _user_download_job(task.id, selected, req.outdir, req.tracks),
         submitted_by=request.client.host if request.client else None,
+        meta={
+            "workflow_label": "Spotify library download",
+            "item_label": "Selection",
+            "item_detail": "Selected tracks" if req.tracks else f"{len(selected)} playlist(s)",
+            "submitted_count": max(len(req.tracks or []), len(selected), 1),
+        },
     )
     return _accepted_response(task)
 
@@ -797,5 +833,11 @@ async def download_candidates(req: CandidateDownloadRequest, request: Request):
         "music.candidate_download",
         lambda task: _candidate_download_job(task.id, urls, req.outdir),
         submitted_by=request.client.host if request.client else None,
+        meta={
+            "workflow_label": "Candidate download",
+            "item_label": "Selected candidates",
+            "item_detail": f"{len(urls)} YouTube candidate(s)",
+            "submitted_count": len(urls),
+        },
     )
     return _accepted_response(task)

@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Instagram Login Browser</title>
+  <style>
+    html,
+    body,
+    #screen {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #000;
+    }
+
+    body {
+      position: fixed;
+      inset: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    #screen {
+      position: fixed;
+      inset: 0;
+      display: block;
+      overflow: hidden;
+    }
+
+    #viewport {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+
+    #viewport canvas {
+      image-rendering: auto;
+      outline: none;
+      max-width: none !important;
+      max-height: none !important;
+    }
+
+    #message {
+      position: fixed;
+      left: 50%;
+      bottom: 18px;
+      z-index: 2;
+      transform: translateX(-50%);
+      max-width: calc(100vw - 32px);
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.72);
+      color: #e5e7eb;
+      font-size: 12px;
+      letter-spacing: 0.01em;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 160ms ease;
+      white-space: nowrap;
+    }
+
+    #message.visible {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div id="screen" aria-label="Remote Instagram login browser">
+    <div id="viewport"></div>
+  </div>
+  <div id="message" role="status"></div>
+
+  <script type="module">
+    import RFB from './core/rfb.js';
+
+    const params = new URLSearchParams(window.location.search);
+    const host = params.get('host') || window.location.hostname;
+    const port = params.get('port') || window.location.port;
+    const path = params.get('path') || 'websockify';
+    const password = params.get('password') || '';
+    const quality = Number.parseInt(params.get('quality') || '9', 10);
+    const compression = Number.parseInt(params.get('compression') || '0', 10);
+    const fitMode = (params.get('fit') || 'cover').toLowerCase();
+    const shouldScale = params.get('scale') !== 'false';
+    const shouldResizeRemote = params.get('resize') === 'remote';
+    const defaultRemoteWidth = Number.parseInt(params.get('width') || '1920', 10);
+    const defaultRemoteHeight = Number.parseInt(params.get('height') || '1080', 10);
+    const reconnect = params.get('reconnect') !== 'false';
+    const screen = document.getElementById('screen');
+    const viewport = document.getElementById('viewport');
+    const message = document.getElementById('message');
+    let rfb = null;
+    let reconnectTimer = null;
+
+    function showMessage(text, sticky = false) {
+      if (!message) return;
+      message.textContent = text;
+      message.classList.add('visible');
+      if (!sticky) {
+        window.setTimeout(() => message.classList.remove('visible'), 1800);
+      }
+    }
+
+    function websockifyUrl() {
+      const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      return `${scheme}://${host}:${port}/${path}`;
+    }
+
+    function focusRemote() {
+      try {
+        if (rfb && typeof rfb.focus === 'function') {
+          rfb.focus();
+        }
+      } catch (_) {
+        // no-op
+      }
+    }
+
+    function firstCanvas() {
+      return viewport ? viewport.querySelector('canvas') : null;
+    }
+
+    function remoteSize() {
+      const canvas = firstCanvas();
+      const width = canvas && canvas.width ? canvas.width : defaultRemoteWidth || 1920;
+      const height = canvas && canvas.height ? canvas.height : defaultRemoteHeight || 1080;
+      return { width, height };
+    }
+
+    function fitRemoteViewport() {
+      if (!screen || !viewport) return;
+
+      const containerWidth = screen.clientWidth || window.innerWidth || defaultRemoteWidth || 1920;
+      const containerHeight = screen.clientHeight || window.innerHeight || defaultRemoteHeight || 1080;
+      const { width: remoteWidth, height: remoteHeight } = remoteSize();
+      if (!containerWidth || !containerHeight || !remoteWidth || !remoteHeight) return;
+
+      if (fitMode !== 'cover') {
+        viewport.style.left = '0px';
+        viewport.style.top = '0px';
+        viewport.style.width = `${containerWidth}px`;
+        viewport.style.height = `${containerHeight}px`;
+        return;
+      }
+
+      // Interactive-safe cover mode:
+      // Do not CSS-transform the noVNC canvas directly. Direct canvas transforms
+      // make the visual pixels and noVNC's pointer-coordinate mapping drift apart.
+      // Instead, size the RFB container itself to a 16:9 cover rectangle and let
+      // noVNC's own scaleViewport logic map mouse/keyboard input correctly inside
+      // that container. The outer #screen clips the overflow to remove letterbox bars.
+      const scale = Math.max(containerWidth / remoteWidth, containerHeight / remoteHeight);
+      const coverWidth = Math.ceil(remoteWidth * scale);
+      const coverHeight = Math.ceil(remoteHeight * scale);
+      const offsetX = Math.floor((containerWidth - coverWidth) / 2);
+
+      viewport.style.left = `${offsetX}px`;
+      viewport.style.top = '0px';
+      viewport.style.width = `${coverWidth}px`;
+      viewport.style.height = `${coverHeight}px`;
+    }
+
+    function scheduleFitRemoteViewport() {
+      window.requestAnimationFrame(fitRemoteViewport);
+      window.setTimeout(fitRemoteViewport, 120);
+      window.setTimeout(fitRemoteViewport, 450);
+    }
+
+    function connect() {
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+
+      fitRemoteViewport();
+      rfb = new RFB(viewport, websockifyUrl(), {
+        credentials: { password }
+      });
+
+      rfb.viewOnly = false;
+      rfb.focusOnClick = true;
+      rfb.clipViewport = false;
+      rfb.scaleViewport = shouldScale;
+      rfb.resizeSession = shouldResizeRemote && fitMode !== 'cover';
+      rfb.showDotCursor = true;
+      rfb.qualityLevel = Number.isFinite(quality) ? Math.max(0, Math.min(9, quality)) : 9;
+      rfb.compressionLevel = Number.isFinite(compression) ? Math.max(0, Math.min(9, compression)) : 0;
+      rfb.background = '#000';
+
+      rfb.addEventListener('connect', () => {
+        document.documentElement.dataset.vncState = 'connected';
+        focusRemote();
+        scheduleFitRemoteViewport();
+      });
+
+      rfb.addEventListener('disconnect', (event) => {
+        document.documentElement.dataset.vncState = 'disconnected';
+        if (event.detail && event.detail.clean) {
+          return;
+        }
+        if (reconnect) {
+          showMessage('Reconnecting browser...', true);
+          reconnectTimer = window.setTimeout(connect, 1200);
+        } else {
+          showMessage('Browser connection closed', true);
+        }
+      });
+
+      rfb.addEventListener('credentialsrequired', () => {
+        showMessage('Browser password required', true);
+      });
+
+      rfb.addEventListener('securityfailure', () => {
+        showMessage('Browser connection failed', true);
+      });
+    }
+
+    const resizeObserver = 'ResizeObserver' in window
+      ? new ResizeObserver(scheduleFitRemoteViewport)
+      : null;
+    if (resizeObserver && screen) {
+      resizeObserver.observe(screen);
+    }
+
+    const mutationObserver = 'MutationObserver' in window
+      ? new MutationObserver(scheduleFitRemoteViewport)
+      : null;
+    if (mutationObserver && viewport) {
+      mutationObserver.observe(viewport, { childList: true, subtree: true });
+    }
+
+    window.addEventListener('resize', () => {
+      focusRemote();
+      scheduleFitRemoteViewport();
+    });
+    window.addEventListener('beforeunload', () => {
+      try {
+        if (rfb && typeof rfb.disconnect === 'function') {
+          rfb.disconnect();
+        }
+      } catch (_) {
+        // no-op
+      }
+    });
+    window.addEventListener('pointerdown', focusRemote, { passive: true });
+    window.addEventListener('keydown', focusRemote);
+
+    connect();
+  </script>
+</body>
+</html>

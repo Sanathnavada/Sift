@@ -8,4 +8,19 @@
 </div>
 {% if queue_summary %}
 <p class="panel__meta">Queued: {{ queue_summary.queued_jobs }} · Running: {{ queue_summary.running_jobs }}</p>
+  {% if queue_summary.lanes %}
+  <div class="lane-status-list">
+    {% for lane in queue_summary.lanes %}
+    <div class="lane-status-row">
+      <span><strong>{{ lane.label }}</strong></span>
+      <span>{{ lane.running }}/{{ lane.capacity }} running{% if lane.queued %}, {{ lane.queued }} queued{% endif %}</span>
+      {% if lane.next_task_label %}
+      <span class="panel__meta">Next: {{ lane.next_task_label }}{% if lane.next_wait_label %} · wait {{ lane.next_wait_label }}{% endif %}</span>
+      {% elif lane.status == "idle" %}
+      <span class="panel__meta">Idle</span>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
 {% endif %}

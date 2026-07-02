@@ -7,20 +7,48 @@
   <p>Supports queued YouTube transcription, Instagram scraping, OCR, and Whisper passes.</p>
 </section>
 
-<section class="segment-bar" data-tab-group>
-  <button class="segment-bar__button is-active" hx-get="/ui/media/forms/youtube" hx-target="#media-form-panel" hx-swap="innerHTML" data-tab> YouTube </button>
-  <button class="segment-bar__button" hx-get="/ui/media/forms/instagram" hx-target="#media-form-panel" hx-swap="innerHTML" data-tab> Instagram </button>
+<section class="segment-bar" data-tab-group data-workspace="media">
+  <button
+    class="segment-bar__button {% if media_active_form != 'instagram' %}is-active{% endif %}"
+    hx-get="/ui/media/forms/youtube"
+    hx-target="#media-form-panel"
+    hx-swap="innerHTML"
+    data-tab
+    data-workspace-mode="youtube">
+    YouTube
+  </button>
+  <button
+    class="segment-bar__button {% if media_active_form == 'instagram' %}is-active{% endif %}"
+    hx-get="/ui/media/forms/instagram"
+    hx-target="#media-form-panel"
+    hx-swap="innerHTML"
+    data-tab
+    data-workspace-mode="instagram">
+    Instagram
+  </button>
 </section>
 
 <section class="console-grid">
   <div class="panel" id="media-form-panel">
-    {% include "partials/media_youtube_form.html" %}
+    {% include media_form_template %}
   </div>
 
-  <div class="panel" id="media-task-panel">
-    {% set empty_title = "No media task yet" %}
-    {% set empty_body = "Submit a YouTube or Instagram workflow and the queue-aware task card will appear here." %}
-    {% include "partials/empty_task_panel.html" %}
+  <div class="panel" id="media-task-panel" data-media-task-workspace>
+    <div id="media-youtube-task-panel" data-media-task-mode="youtube" {% if media_active_form == 'instagram' %}class="is-hidden"{% endif %}>
+      {{ media_youtube_panel_html|safe }}
+    </div>
+
+    <div data-instagram-task-panels data-media-task-mode="instagram" {% if media_active_form != 'instagram' %}class="is-hidden"{% endif %}>
+      <div id="media-instagram-posts-task-panel" data-instagram-task-mode="posts" {% if instagram_active_mode != 'posts' %}class="is-hidden"{% endif %}>
+        {{ media_instagram_posts_panel_html|safe }}
+      </div>
+      <div id="media-instagram-public-profile-task-panel" data-instagram-task-mode="public_profile" {% if instagram_active_mode != 'public_profile' %}class="is-hidden"{% endif %}>
+        {{ media_instagram_public_panel_html|safe }}
+      </div>
+      <div id="media-instagram-private-collection-task-panel" data-instagram-task-mode="private_collection" {% if instagram_active_mode != 'private_collection' %}class="is-hidden"{% endif %}>
+        {{ media_instagram_private_panel_html|safe }}
+      </div>
+    </div>
   </div>
 </section>
 

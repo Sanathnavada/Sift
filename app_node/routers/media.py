@@ -15,7 +15,13 @@ from pydantic import BaseModel
 from ..artifacts import create_job_output_dir, get_artifact_expiry, register_directory_artifacts
 from ..input_resolver import InputResolutionError, resolve_multi_input
 from ..instagram_sessions import InstagramSessionStore, SESSION_HEADER
-from ..settings import MEDIA_NODE_DIR, ROOT_DIR, SCRAPING_PATH
+from ..settings import (
+    INSTAGRAM_AUTH_BROWSER_ENABLED,
+    INSTAGRAM_AUTH_TIMEOUT_SECONDS,
+    MEDIA_NODE_DIR,
+    ROOT_DIR,
+    SCRAPING_PATH,
+)
 from ..tasks import append_task_event, submit_bound_job
 
 sys.path.insert(0, str(MEDIA_NODE_DIR))
@@ -48,6 +54,12 @@ def _accepted_response(task) -> JSONResponse:
             "task_id": task.id,
             "status": task.status,
             "queue_position": task.queue_position,
+            "lane": task.meta.get("lane"),
+            "lane_label": task.meta.get("lane_label"),
+            "queue_message": task.meta.get("queue_message"),
+            "estimated_wait_seconds": task.meta.get("estimated_wait_seconds"),
+            "estimated_runtime_seconds": task.meta.get("estimated_runtime_seconds"),
+            "estimated_total_seconds": task.meta.get("estimated_total_seconds"),
             "poll_url": f"/api/tasks/{task.id}",
         },
     )
@@ -163,6 +175,115 @@ def _session_dir(session_id: str | None) -> Path:
         raise HTTPException(400, str(exc)) from exc
 
 
+def _instagram_session_file(session_dir: Path) -> Path:
+    return session_dir / "web_session.json"
+
+
+def _instagram_auth_cancel_file(session_dir: Path, task_id: str | None = None) -> Path:
+    if task_id:
+        safe_task_id = "".join(ch for ch in task_id if ch.isalnum() or ch in {"-", "_"})
+        return session_dir / f".instagram_auth_cancel_{safe_task_id}"
+    return session_dir / ".instagram_auth_cancel"
+
+
+def _request_instagram_auth_cancel(session_dir: Path, task_id: str | None = None) -> None:
+    session_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        _instagram_auth_cancel_file(session_dir, task_id).write_text("cancel", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _clear_instagram_auth_cancel(session_dir: Path, task_id: str | None = None) -> None:
+    paths = [_instagram_auth_cancel_file(session_dir, task_id)] if task_id is not None else list(session_dir.glob(".instagram_auth_cancel*"))
+    for path in paths:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+
+
+def _instagram_auth_cancel_requested(session_dir: Path, task_id: str | None = None) -> bool:
+    return _instagram_auth_cancel_file(session_dir).exists() or _instagram_auth_cancel_file(session_dir, task_id).exists()
+
+def _instagram_auth_status(session_dir: Path) -> dict:
+    session_file = _instagram_session_file(session_dir)
+    status_payload = {
+        "authenticated": False,
+        "session_file_exists": session_file.exists(),
+        "username": None,
+    }
+    if not session_file.exists():
+        return status_payload
+
+    try:
+        import json
+
+        data = json.loads(session_file.read_text(encoding="utf-8"))
+    except Exception:
+        return status_payload
+
+    has_required_cookies = bool(data.get("sessionid") and data.get("csrftoken"))
+    status_payload.update(
+        {
+            "authenticated": has_required_cookies,
+            "username": data.get("_ig_username"),
+        }
+    )
+    return status_payload
+
+
+def _is_instagram_authenticated(session_dir: Path) -> bool:
+    return bool(_instagram_auth_status(session_dir)["authenticated"])
+
+
+def _require_instagram_auth_for_job(session_dir: Path) -> None:
+    if not _is_instagram_authenticated(session_dir):
+        raise RuntimeError(
+            "Instagram login is required. Connect Instagram before running this workflow."
+        )
+
+
+def _reset_instagram_auth(session_dir: Path) -> dict:
+    session_file = _instagram_session_file(session_dir)
+    if session_file.exists():
+        session_file.unlink()
+    return _instagram_auth_status(session_dir)
+
+
+def _instagram_auth_job(task_id: str, session_dir: Path) -> dict:
+    if not INSTAGRAM_AUTH_BROWSER_ENABLED:
+        raise RuntimeError("Instagram browser authentication is disabled for this deployment.")
+
+    _clear_instagram_auth_cancel(session_dir, task_id)
+    append_task_event(task_id, "Opening Instagram login browser. Complete login in the popup console.")
+    fetcher = WebCollectionFetcher(
+        outdir=str(session_dir),
+        session_dir=str(session_dir),
+        username=None,
+        password=None,
+    )
+    result = fetcher.acquire_interactive_login(
+        timeout_seconds=INSTAGRAM_AUTH_TIMEOUT_SECONDS,
+        should_cancel=lambda: _instagram_auth_cancel_requested(session_dir, task_id),
+    )
+    append_task_event(task_id, "Instagram session saved successfully.")
+    status_payload = _instagram_auth_status(session_dir)
+    return _build_result(
+        task_id=task_id,
+        message="Connected Instagram browser session",
+        input_payload={"workflow": "instagram_auth"},
+        output_payload={
+            "username": result.get("username") or status_payload.get("username"),
+            "session_file_exists": status_payload["session_file_exists"],
+        },
+        stats={"authenticated": status_payload["authenticated"]},
+        artifacts=[],
+    )
+
+
 def _make_public_insta_fetcher(session_dir: Path) -> YtdlpInstaFetcher:
     return YtdlpInstaFetcher(scraping_path=SCRAPING_PATH, session_dir=str(session_dir))
 
@@ -245,6 +366,7 @@ def _youtube_job(task_id: str, inputs: list[str], outdir: Optional[str]) -> dict
 
 def _public_user_job(task_id: str, username: str, first_n: int, outdir: Optional[str],
                      session_dir: Path) -> dict:
+    _require_instagram_auth_for_job(session_dir)
     job_outdir, output_mode = create_job_output_dir(task_id, "media.public_user", outdir is None, outdir)
     web = WebCollectionFetcher(
         outdir=str(job_outdir),
@@ -340,9 +462,8 @@ def _ig_bulk_job(task_id: str, urls: list[str], outdir: Optional[str],
 def _private_user_job(task_id: str, collection: str, username: Optional[str],
                       password: Optional[str], outdir: Optional[str],
                       session_dir: Path) -> dict:
+    _require_instagram_auth_for_job(session_dir)
     job_outdir, output_mode = create_job_output_dir(task_id, "media.private_user", outdir is None, outdir)
-    if not (session_dir / "web_session.json").exists():
-        append_task_event(task_id, "Instagram login window opening; check the browser window or taskbar.")
     web = WebCollectionFetcher(
         outdir=str(job_outdir),
         session_dir=str(session_dir),
@@ -390,6 +511,34 @@ def _clean_bulk_job(task_id: str, file_path: str) -> dict:
     )
 
 
+@router.get("/instagram/auth/status")
+async def instagram_auth_status(request: Request):
+    session_dir = _session_dir(request.headers.get(SESSION_HEADER))
+    return _instagram_auth_status(session_dir)
+
+
+@router.post("/instagram/auth/start")
+async def instagram_auth_start(request: Request):
+    session_dir = _session_dir(request.headers.get(SESSION_HEADER))
+    task = await submit_bound_job(
+        "media.instagram_auth",
+        lambda task: _instagram_auth_job(task.id, session_dir),
+        submitted_by=request.client.host if request.client else None,
+        meta={
+            "workflow_label": "Instagram login",
+            "item_label": "Auth browser",
+            "item_detail": "Complete Instagram login in the popup console",
+        },
+    )
+    return _accepted_response(task)
+
+
+@router.delete("/instagram/auth/session")
+async def instagram_auth_reset(request: Request):
+    session_dir = _session_dir(request.headers.get(SESSION_HEADER))
+    return _reset_instagram_auth(session_dir)
+
+
 @router.post("/youtube")
 async def process_youtube(req: YoutubeRequest, request: Request):
     try:
@@ -401,6 +550,12 @@ async def process_youtube(req: YoutubeRequest, request: Request):
         "media.youtube",
         lambda task: _youtube_job(task.id, inputs, req.outdir),
         submitted_by=request.client.host if request.client else None,
+        meta={
+            "workflow_label": "YouTube transcription",
+            "item_label": "YouTube input",
+            "item_detail": f"{inputs[0]} + {len(inputs) - 1} more" if len(inputs) > 1 else inputs[0],
+            "submitted_count": len(inputs),
+        },
     )
     return _accepted_response(task)
 
@@ -414,10 +569,21 @@ async def scrape_public_user(req: PublicUserRequest, request: Request):
         raise HTTPException(400, "first_n must be at least 1.")
 
     session_dir = _session_dir(request.headers.get(SESSION_HEADER))
+    if not _is_instagram_authenticated(session_dir):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Connect Instagram before running public profile scraping.",
+        )
     task = await submit_bound_job(
         "media.public_user",
         lambda task: _public_user_job(task.id, username, req.first_n, req.outdir, session_dir),
         submitted_by=request.client.host if request.client else None,
+        meta={
+            "workflow_label": "Public profile scrape",
+            "item_label": "Profile",
+            "item_detail": f"@{username} - first {req.first_n} posts",
+            "submitted_count": req.first_n,
+        },
     )
     return _accepted_response(task)
 
@@ -433,6 +599,12 @@ async def scrape_post(req: PostRequest, request: Request):
         "media.post",
         lambda task: _post_job(task.id, url, req.outdir, session_dir),
         submitted_by=request.client.host if request.client else None,
+        meta={
+            "workflow_label": "Instagram post",
+            "item_label": "Post URL",
+            "item_detail": url,
+            "submitted_count": 1,
+        },
     )
     return _accepted_response(task)
 
@@ -449,6 +621,12 @@ async def scrape_ig_bulk(req: IgBulkRequest, request: Request):
         "media.ig_bulk",
         lambda task: _ig_bulk_job(task.id, urls, req.outdir, session_dir),
         submitted_by=request.client.host if request.client else None,
+        meta={
+            "workflow_label": "Bulk Instagram scrape",
+            "item_label": "URLs",
+            "item_detail": f"{urls[0]} + {len(urls) - 1} more" if len(urls) > 1 else urls[0],
+            "submitted_count": len(urls),
+        },
     )
     return _accepted_response(task)
 
@@ -460,12 +638,23 @@ async def scrape_private_user(req: PrivateUserRequest, request: Request):
         raise HTTPException(400, "Collection name is required.")
 
     session_dir = _session_dir(request.headers.get(SESSION_HEADER))
+    if not _is_instagram_authenticated(session_dir):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Connect Instagram before running private collection scraping.",
+        )
     task = await submit_bound_job(
         "media.private_user",
         lambda task: _private_user_job(
             task.id, collection, req.username, req.password, req.outdir, session_dir
         ),
         submitted_by=request.client.host if request.client else None,
+        meta={
+            "workflow_label": "Private collection scrape",
+            "item_label": "Collection",
+            "item_detail": collection,
+            "submitted_count": 1,
+        },
     )
     return _accepted_response(task)
 
@@ -479,5 +668,11 @@ async def clean_bulk(req: CleanBulkRequest, request: Request):
         "media.clean_bulk",
         lambda task: _clean_bulk_job(task.id, req.file_path),
         submitted_by=request.client.host if request.client else None,
+        meta={
+            "workflow_label": "Bulk clean",
+            "item_label": "File",
+            "item_detail": req.file_path,
+            "submitted_count": 1,
+        },
     )
     return _accepted_response(task)

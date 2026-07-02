@@ -18,3 +18,7 @@
 
   {% include "partials/music_playlist_selector.html" %}
 </article>
+
+{% if music_download_tray_oob %}
+{% include "partials/music_download_tray.html" %}
+{% endif %}

@@ -45,4 +45,8 @@ RUN mkdir -p \
 
 EXPOSE 8000 6080
 
-CMD ["docker-entrypoint.sh"]
+RUN chmod +x /app/docker-entrypoint.sh
+
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
+
+CMD ["python", "-m", "uvicorn", "app_node.main:app", "--host", "0.0.0.0", "--port", "8000"]

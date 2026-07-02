@@ -27,6 +27,8 @@ _SC_RE = re.compile(r"instagram\.com/(?:p|reel|tv)/([A-Za-z0-9_-]+)")
 _SHORTCODE_RE = re.compile(r"^[A-Za-z0-9_-]{5,20}$")
 _VALID_SCRAPING_PATHS = {"instaloader", "ytdlp", "playwright"}
 _SESSION_FILE = "web_session.json"
+_YTDLP_COOKIE_FILE = "yt_dlp_cookies.txt"
+_COOKIE_NAMES = {"sessionid", "csrftoken", "ds_user_id", "ig_did", "mid", "datr", "rur"}
 _BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -245,15 +247,23 @@ class YtdlpInstaFetcher:
         if items:
             return items
 
+        # Pure reels/TV posts are a strong fit for yt-dlp. Feed /p/ URLs can be
+        # images or mixed sidecar carousels, so try the carousel-aware
+        # instaloader path before treating the parent URL as a video download.
+        if self._is_reel_or_tv_url(url):
+            logger.warning("Playwright did not expose post JSON for %s; trying yt-dlp with saved session cookies.", url)
+            items = self._fetch_single_post_ytdlp(url)
+            if items:
+                return items
+
         logger.warning("Playwright did not expose post JSON for %s; falling back to instaloader.", url)
         items = self._fetch_single_post_instaloader(url)
         if items:
             return items
 
-        if "/reel/" in url or "/tv/" in url:
-            logger.warning("instaloader did not fetch %s; falling back to yt-dlp.", url)
-            return self._fetch_single_post_ytdlp(url)
-
+        # Do not use parent-url yt-dlp as a final fallback for /p/ feed posts.
+        # It works for pure reels, but mixed carousel/feed URLs commonly report
+        # "No video formats found" and bypass the existing carousel child path.
         logger.warning("Could not fetch post media for %s", url)
         return []
 
@@ -301,9 +311,8 @@ class YtdlpInstaFetcher:
                 content_type = response.headers.get("content-type", "")
                 if "json" not in content_type:
                     return
-                try:
-                    data = response.json()
-                except Exception:
+                data = self._safe_response_json(response)
+                if data is None:
                     return
                 for item in self._find_media_items(data):
                     add_item(item)
@@ -360,9 +369,8 @@ class YtdlpInstaFetcher:
                 content_type = response.headers.get("content-type", "")
                 if "json" not in content_type:
                     return
-                try:
-                    data = response.json()
-                except Exception:
+                data = self._safe_response_json(response)
+                if data is None:
                     return
                 for shortcode in self._find_shortcodes(data):
                     add_url(f"https://www.instagram.com/p/{shortcode}/")
@@ -394,15 +402,45 @@ class YtdlpInstaFetcher:
 
         return ordered[:limit] if limit else ordered
 
+    @staticmethod
+    def _is_reel_or_tv_url(url: str) -> bool:
+        return "/reel/" in url or "/tv/" in url
+
+    @staticmethod
+    def _is_carousel_item(item: dict) -> bool:
+        return item.get("media_type") == 8 or bool(item.get("carousel_media"))
+
+    @classmethod
+    def _media_item_score(cls, item: dict) -> tuple[int, int]:
+        """Rank duplicate media candidates for the same shortcode.
+
+        Instagram's single-post pages often emit several JSON fragments for the
+        same shortcode. Prefer the rich sidecar parent over a preview/video-ish
+        fragment so existing carousel processing receives the children.
+        """
+        child_count = len(item.get("carousel_media") or [])
+        if cls._is_carousel_item(item):
+            return (3000 + child_count, child_count)
+        if item.get("media_type") == 2 or item.get("video_versions"):
+            return (2000, len(item.get("video_versions") or []))
+        if item.get("media_type") == 1 or item.get("image_versions2"):
+            return (1000, len((item.get("image_versions2") or {}).get("candidates") or []))
+        return (0, 0)
+
+    @classmethod
+    def _select_best_media_candidates(cls, candidates: list[dict], shortcode: str) -> list[dict]:
+        matching = [item for item in candidates if item.get("code") == shortcode]
+        if not matching:
+            return []
+        matching.sort(key=cls._media_item_score, reverse=True)
+        return [matching[0]]
+
     def _extract_post_media_with_playwright(self, url: str, shortcode: str) -> list[dict]:
-        seen = set()
-        items = []
+        candidates = []
 
         def add_item(item: dict) -> None:
-            code = item.get("code")
-            if code == shortcode and code not in seen:
-                seen.add(code)
-                items.append(item)
+            if item.get("code") == shortcode:
+                candidates.append(item)
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
@@ -414,31 +452,322 @@ class YtdlpInstaFetcher:
                 content_type = response.headers.get("content-type", "")
                 if "json" not in content_type:
                     return
-                try:
-                    data = response.json()
-                except Exception:
+                data = self._safe_response_json(response)
+                if data is None:
                     return
                 for item in self._find_media_items(data):
                     add_item(item)
 
             page.on("response", on_response)
-            page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-            page.wait_for_timeout(4_000)
-            page.remove_listener("response", on_response)
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+                try:
+                    page.wait_for_load_state("networkidle", timeout=8_000)
+                except Exception:
+                    # Instagram often keeps long-polling resources open. A networkidle
+                    # timeout is not a failure; continue with the JSON/DOM fallbacks.
+                    pass
+                page.wait_for_timeout(3_000)
 
-        return items
+                selected = self._select_best_media_candidates(candidates, shortcode)
+                if selected:
+                    return selected
+
+                for item in self._extract_post_api_fallback(page, shortcode):
+                    add_item(item)
+                selected = self._select_best_media_candidates(candidates, shortcode)
+                if selected:
+                    return selected
+
+                for item in self._extract_post_embedded_json_fallback(page, shortcode):
+                    add_item(item)
+                selected = self._select_best_media_candidates(candidates, shortcode)
+                if selected:
+                    return selected
+
+                for item in self._extract_post_dom_fallback(page, url, shortcode):
+                    add_item(item)
+                return self._select_best_media_candidates(candidates, shortcode)
+            finally:
+                try:
+                    page.remove_listener("response", on_response)
+                except Exception:
+                    pass
+                try:
+                    context.close()
+                except Exception:
+                    pass
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+
+    def _extract_post_api_fallback(self, page, shortcode: str) -> list[dict]:
+        """Fetch Instagram's authenticated shortcode info endpoint in-page.
+
+        The direct /p/ page sometimes does not emit usable post JSON before the
+        network listener is removed. Calling the same-origin web API from the
+        logged-in Playwright page keeps cookies/CSRF/session handling inside the
+        browser and returns the rich media object for sidecar carousel posts.
+        """
+        try:
+            payload = page.evaluate(
+                """
+                async (shortcode) => {
+                  const csrf = document.cookie
+                    .split('; ')
+                    .find((part) => part.startsWith('csrftoken='))
+                    ?.split('=')[1] || '';
+                  const response = await fetch(`/api/v1/media/shortcode/${shortcode}/info/`, {
+                    method: 'GET',
+                    credentials: 'include',
+                    headers: {
+                      'Accept': 'application/json, text/plain, */*',
+                      'X-Requested-With': 'XMLHttpRequest',
+                      'X-IG-App-ID': '936619743392459',
+                      ...(csrf ? {'X-CSRFToken': csrf} : {})
+                    }
+                  });
+                  const text = await response.text();
+                  if (!response.ok) {
+                    return {ok: false, status: response.status, body: text.slice(0, 500)};
+                  }
+                  try {
+                    return {ok: true, data: JSON.parse(text)};
+                  } catch (error) {
+                    return {ok: false, status: response.status, body: text.slice(0, 500)};
+                  }
+                }
+                """,
+                shortcode,
+            )
+        except Exception as exc:
+            logger.debug("Instagram shortcode API fallback failed for %s: %s", shortcode, exc)
+            return []
+
+        if not isinstance(payload, dict) or not payload.get("ok"):
+            logger.debug(
+                "Instagram shortcode API fallback did not return media for %s: %s",
+                shortcode,
+                payload,
+            )
+            return []
+
+        data = payload.get("data")
+        items = self._find_media_items(data)
+        selected = self._select_best_media_candidates(items, shortcode)
+        if selected:
+            logger.info("[playwright] Fetched post metadata through authenticated shortcode API: %s", shortcode)
+        return selected
+
+    def _extract_post_embedded_json_fallback(self, page, shortcode: str) -> list[dict]:
+        """Parse embedded script JSON when network response capture is empty."""
+        try:
+            scripts = page.evaluate(
+                """
+                (shortcode) => Array.from(document.scripts)
+                  .map((script) => ({
+                    type: script.type || '',
+                    text: script.textContent || ''
+                  }))
+                  .filter((script) => script.text.includes(shortcode))
+                  .slice(0, 80)
+                """,
+                shortcode,
+            )
+        except Exception as exc:
+            logger.debug("Could not read Instagram embedded JSON scripts for %s: %s", shortcode, exc)
+            return []
+
+        candidates = []
+        for script in scripts or []:
+            text = (script or {}).get("text") or ""
+            stripped = text.strip()
+            if not stripped or stripped[0] not in "[{":
+                continue
+            try:
+                data = json.loads(stripped)
+            except Exception:
+                continue
+            candidates.extend(self._find_media_items(data))
+
+        selected = self._select_best_media_candidates(candidates, shortcode)
+        if selected:
+            logger.info("[playwright] Fetched post metadata from embedded page JSON: %s", shortcode)
+        return selected
+
+
+    def _read_saved_cookies(self) -> dict:
+        if not self.session_file or not self.session_file.exists():
+            return {}
+        try:
+            data = json.loads(self.session_file.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        return {
+            str(key): str(value)
+            for key, value in data.items()
+            if key in _COOKIE_NAMES and value
+        }
+
+    def _ensure_ytdlp_cookiefile(self) -> str | None:
+        """Write saved Instagram browser cookies in Netscape format for yt-dlp.
+
+        Playwright can reuse cookies directly, but yt-dlp expects a browser or
+        Netscape cookie file. Without this, private/session-bound reels often
+        fail with Instagram's "empty media response" even after the UI says the
+        session is connected.
+        """
+        cookies = self._read_saved_cookies()
+        if not cookies or not self.session_file:
+            return None
+
+        cookie_path = self.session_file.with_name(_YTDLP_COOKIE_FILE)
+        lines = [
+            "# Netscape HTTP Cookie File",
+            "# Generated from the saved Instagram web session.",
+        ]
+        # Use a far-future expiry. The real session validity is still governed
+        # by Instagram; this only makes the cookie jar acceptable to yt-dlp.
+        expiry = "2147483647"
+        for name, value in cookies.items():
+            secure = "TRUE" if name in {"sessionid", "csrftoken", "ds_user_id"} else "FALSE"
+            lines.append(f".instagram.com\tTRUE\t/\t{secure}\t{expiry}\t{name}\t{value}")
+            lines.append(f"www.instagram.com\tFALSE\t/\t{secure}\t{expiry}\t{name}\t{value}")
+
+        try:
+            cookie_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            try:
+                cookie_path.chmod(0o600)
+            except OSError:
+                pass
+            return str(cookie_path)
+        except Exception as exc:
+            logger.debug("Could not write yt-dlp Instagram cookie file: %s", exc)
+            return None
+
+    @staticmethod
+    def _safe_response_json(response) -> dict | list | None:
+        try:
+            return response.json()
+        except BaseException as exc:
+            # Playwright can cancel in-flight response bodies when the page or
+            # context closes. In Python 3.12 asyncio.CancelledError is not caught
+            # by `except Exception`, so handle it explicitly and keep shutdown
+            # clean instead of emitting noisy callback tracebacks.
+            if exc.__class__.__name__ in {"CancelledError", "TargetClosedError"}:
+                return None
+            if "Target page, context or browser has been closed" in str(exc):
+                return None
+            logger.debug("Could not decode Instagram response JSON: %s", exc)
+            return None
+
+    def _build_ytdlp_download_item(
+        self,
+        url: str,
+        shortcode: str,
+        *,
+        caption: str = "",
+        thumbnail_url: str | None = None,
+        username: str = "unknown",
+    ) -> dict:
+        item = {
+            "code": shortcode,
+            "media_type": 2,
+            "product_type": "clips" if "/reel/" in url else "feed",
+            "video_versions": [{"url": url}],
+            "caption": {"text": caption or ""},
+            "user": {"username": username or "unknown"},
+            "_download_with_ytdlp": True,
+            "_source_url": url,
+        }
+        if thumbnail_url:
+            item["image_versions2"] = {"candidates": [{"url": thumbnail_url}]}
+        cookiefile = self._ensure_ytdlp_cookiefile()
+        if cookiefile:
+            item["_ytdlp_cookiefile"] = cookiefile
+        return item
+
+    def _extract_post_dom_fallback(self, page, url: str, shortcode: str) -> list[dict]:
+        """Return a conservative DOM fallback when rich JSON is unavailable.
+
+        Keep yt-dlp parent-URL fallback for reels/TV posts, where the parent URL
+        is normally a single video. For /p/ feed URLs, avoid manufacturing a
+        video item from the parent page because mixed sidecar carousels often do
+        not have a single downloadable parent video format.
+        """
+        try:
+            payload = page.evaluate(
+                """
+                () => {
+                  const pick = (selector) => {
+                    const node = document.querySelector(selector);
+                    return node ? (node.getAttribute('content') || node.getAttribute('href') || '') : '';
+                  };
+                  return {
+                    url: window.location.href,
+                    title: document.title || '',
+                    canonical: pick('link[rel="canonical"]'),
+                    description: pick('meta[property="og:description"], meta[name="description"]'),
+                    image: pick('meta[property="og:image"]'),
+                    video: pick('meta[property="og:video"], meta[property="og:video:secure_url"]'),
+                    text: document.body ? document.body.innerText.slice(0, 2000) : ''
+                  };
+                }
+                """
+            )
+        except Exception:
+            return []
+
+        page_url = (payload or {}).get("url") or ""
+        canonical = (payload or {}).get("canonical") or ""
+        combined = "\n".join(str((payload or {}).get(key) or "") for key in ("url", "canonical", "title", "description", "text"))
+        if shortcode not in page_url and shortcode not in canonical and shortcode not in combined:
+            return []
+        lowered = combined.lower()
+        if "/accounts/login" in page_url.lower() or "log in to instagram" in lowered:
+            return []
+
+        source_url = canonical if _SC_RE.search(canonical) else url
+        caption = (payload or {}).get("description") or (payload or {}).get("title") or ""
+        image_url = (payload or {}).get("image") or None
+        video_url = (payload or {}).get("video") or None
+
+        if self._is_reel_or_tv_url(source_url):
+            return [
+                self._build_ytdlp_download_item(
+                    source_url,
+                    shortcode,
+                    caption=caption,
+                    thumbnail_url=image_url,
+                )
+            ]
+
+        if video_url:
+            item = {
+                "code": shortcode,
+                "media_type": 2,
+                "product_type": "feed",
+                "video_versions": [{"url": video_url}],
+                "caption": {"text": caption},
+                "user": {"username": "unknown"},
+            }
+            if image_url:
+                item["image_versions2"] = {"candidates": [{"url": image_url}]}
+            return [item]
+
+        # Do not turn a /p/ page's og:image preview into a completed post here.
+        # For mixed carousels that preview is usually only the first child, and
+        # returning it would bypass the existing sidecar/child extraction path.
+        return []
 
     def _restore_browser_cookies(self, context) -> None:
-        if not self.session_file or not self.session_file.exists():
-            return
-        try:
-            saved_cookies = json.loads(self.session_file.read_text(encoding="utf-8"))
-        except Exception:
-            return
+        saved_cookies = self._read_saved_cookies()
         cookies = [
             {"name": key, "value": value, "domain": ".instagram.com", "path": "/"}
             for key, value in saved_cookies.items()
-            if key in {"sessionid", "csrftoken", "ds_user_id", "ig_did", "mid", "datr"}
         ]
         if cookies:
             context.add_cookies(cookies)
@@ -491,16 +820,34 @@ class YtdlpInstaFetcher:
         code = media.get("code") or media.get("shortcode")
         if not isinstance(code, str) or not _SHORTCODE_RE.match(code):
             return None
-        if not (
+
+        carousel_children = media.get("carousel_media")
+        if not carousel_children and isinstance(media.get("edge_sidecar_to_children"), dict):
+            carousel_children = [
+                edge.get("node")
+                for edge in media["edge_sidecar_to_children"].get("edges", [])
+                if isinstance(edge, dict) and edge.get("node")
+            ]
+
+        has_image = bool(
             media.get("image_versions2")
-            or media.get("video_versions")
-            or media.get("carousel_media")
-        ):
+            or media.get("display_url")
+            or media.get("thumbnail_src")
+            or media.get("display_resources")
+        )
+        has_video = bool(media.get("video_versions") or media.get("video_url"))
+        has_carousel = bool(carousel_children)
+        if not (has_image or has_video or has_carousel):
             return None
 
         media_type = media.get("media_type")
         if media_type is None:
-            media_type = 8 if media.get("carousel_media") else 2 if media.get("video_versions") else 1
+            if has_carousel:
+                media_type = 8
+            elif media.get("is_video") or has_video:
+                media_type = 2
+            else:
+                media_type = 1
 
         caption = ""
         raw_caption = media.get("caption")
@@ -508,9 +855,14 @@ class YtdlpInstaFetcher:
             caption = raw_caption.get("text") or ""
         elif raw_caption:
             caption = str(raw_caption)
+        elif isinstance(media.get("edge_media_to_caption"), dict):
+            edges = media["edge_media_to_caption"].get("edges") or []
+            if edges and isinstance(edges[0], dict):
+                node = edges[0].get("node") or {}
+                caption = node.get("text") or ""
 
         user = "unknown"
-        raw_user = media.get("user")
+        raw_user = media.get("user") or media.get("owner")
         if isinstance(raw_user, dict):
             user = raw_user.get("username") or user
 
@@ -526,11 +878,27 @@ class YtdlpInstaFetcher:
 
         if media.get("image_versions2"):
             item["image_versions2"] = media["image_versions2"]
+        elif media.get("display_resources"):
+            candidates = [
+                {"url": candidate.get("src")}
+                for candidate in media.get("display_resources", [])
+                if isinstance(candidate, dict) and candidate.get("src")
+            ]
+            if candidates:
+                item["image_versions2"] = {"candidates": candidates}
+        elif media.get("display_url"):
+            item["image_versions2"] = {"candidates": [{"url": media["display_url"]}]}
+        elif media.get("thumbnail_src"):
+            item["image_versions2"] = {"candidates": [{"url": media["thumbnail_src"]}]}
+
         if media.get("video_versions"):
             item["video_versions"] = media["video_versions"]
-        if media_type == 8 and media.get("carousel_media"):
+        elif media.get("video_url"):
+            item["video_versions"] = [{"url": media["video_url"]}]
+
+        if media_type == 8 and carousel_children:
             children = []
-            for idx, child in enumerate(media.get("carousel_media", [])):
+            for idx, child in enumerate(carousel_children):
                 child_media = child.copy() if isinstance(child, dict) else child
                 if isinstance(child_media, dict) and not (child_media.get("code") or child_media.get("shortcode")):
                     child_media["code"] = f"{code}_{idx}"
@@ -540,13 +908,11 @@ class YtdlpInstaFetcher:
             if children:
                 item["carousel_media"] = children
 
-        is_carousel_child = "_" in code
-        if media_type == 2 and not is_carousel_child:
-            source_url = self._post_url_for_item(item)
-            item["_download_with_ytdlp"] = True
-            item["_source_url"] = source_url
-            item["video_versions"] = [{"url": source_url}]
-
+        # Do not automatically convert every Playwright video-shaped feed item
+        # into a yt-dlp parent URL download. Direct Instagram JSON already carries
+        # usable child URLs, and parent /p/ URLs can be mixed sidecar carousels
+        # where yt-dlp reports "No video formats found". Explicit yt-dlp items are
+        # still created by _build_ytdlp_download_item() and _convert_ytdlp_info().
         return item
 
     @staticmethod
@@ -565,6 +931,9 @@ class YtdlpInstaFetcher:
             "extract_flat": False,
             "skip_download": True,
         }
+        cookiefile = self._ensure_ytdlp_cookiefile()
+        if cookiefile:
+            opts["cookiefile"] = cookiefile
         if playlistend:
             opts["playlistend"] = playlistend
         return opts
@@ -585,7 +954,7 @@ class YtdlpInstaFetcher:
         ]
         source_url = webpage_url or self._normalize_post_url(shortcode)
 
-        return {
+        item = {
             "code": shortcode,
             "media_type": 2,
             "product_type": "clips",
@@ -596,9 +965,13 @@ class YtdlpInstaFetcher:
             "_download_with_ytdlp": True,
             "_source_url": source_url,
         }
+        cookiefile = self._ensure_ytdlp_cookiefile()
+        if cookiefile:
+            item["_ytdlp_cookiefile"] = cookiefile
+        return item
 
     @staticmethod
-    def download_with_ytdlp(source_url: str, folder: str, code: str) -> bool:
+    def download_with_ytdlp(source_url: str, folder: str, code: str, cookiefile: str | None = None) -> bool:
         if yt_dlp is None:
             logger.warning("yt-dlp is not installed; cannot download %s", source_url)
             return False
@@ -613,6 +986,8 @@ class YtdlpInstaFetcher:
             "outtmpl": outtmpl,
             "noplaylist": True,
         }
+        if cookiefile and Path(cookiefile).exists():
+            opts["cookiefile"] = cookiefile
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([source_url])

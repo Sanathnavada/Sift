@@ -1,37 +1,69 @@
-import sys
 import gc
 import logging
-import warnings
 import os
 import shutil
 import subprocess
 import threading
+import warnings
 from contextlib import contextmanager
+from typing import Any
+
+# Set runtime defaults before importing torch/transformers. Users can override
+# these in .env/.env.docker before the process starts.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ.setdefault("OMP_NUM_THREADS", os.getenv("ML_CPU_THREADS", "2"))
+os.environ.setdefault("MKL_NUM_THREADS", os.getenv("ML_CPU_THREADS", "2"))
 
 import numpy as np
 from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-# CRITICAL: Set CUDA allocator config BEFORE importing torch
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
-# Lazy imports handling for production environments where ML libs might be missing
 try:
-    from transformers import AutoProcessor, AutoModelForCausalLM
     import torch
-except ImportError:
-    logger.error("Error: transformers/torch not installed")
-    sys.exit(1)
+    from transformers import AutoModelForCausalLM, AutoProcessor
+except ImportError as exc:
+    raise RuntimeError("transformers and torch are required for Florence OCR") from exc
 
 try:
-    import whisper
+    import whisper as openai_whisper
 except ImportError:
-    logger.error("Error: openai-whisper not installed")
-    sys.exit(1)
+    openai_whisper = None
+
+try:
+    from faster_whisper import WhisperModel as FasterWhisperModel
+except ImportError:
+    FasterWhisperModel = None
 
 
-def _resolve_ffmpeg_executable():
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return max(int(value.strip()), minimum)
+    except ValueError:
+        logger.warning("Invalid integer for %s=%r; using %s", name, value, default)
+        return default
+
+
+def _env_choice(name: str, default: str, choices: set[str]) -> str:
+    value = (os.getenv(name) or default).strip().lower()
+    if value in choices:
+        return value
+    logger.warning("Invalid value for %s=%r; using %s", name, value, default)
+    return default
+
+
+def _resolve_ffmpeg_executable() -> str:
     """Return the system or bundled FFmpeg executable."""
     system_ffmpeg = shutil.which("ffmpeg")
     if system_ffmpeg:
@@ -49,17 +81,20 @@ def _resolve_ffmpeg_executable():
 _FFMPEG_EXECUTABLE = _resolve_ffmpeg_executable()
 
 warnings.filterwarnings("ignore")
+
+try:
+    torch_threads = _env_int("TORCH_NUM_THREADS", int(os.getenv("ML_CPU_THREADS", "2")), minimum=1)
+    torch.set_num_threads(torch_threads)
+except Exception:
+    pass
+
 _INFERENCE_LOCK = threading.Lock()
-_INFERENCE_LOCK_ENABLED = os.getenv("MEDIA_INFERENCE_LOCK", "true").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
+_INFERENCE_LOCK_ENABLED = _env_bool("MEDIA_INFERENCE_LOCK", True)
 
 
 @contextmanager
 def inference_lock():
+    """Serialize heavy ML inference so two large models cannot load together."""
     if not _INFERENCE_LOCK_ENABLED:
         yield
         return
@@ -67,19 +102,38 @@ def inference_lock():
         yield
 
 
+def _cleanup_memory() -> None:
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def _move_inputs_to_device(inputs: dict[str, Any], device: str) -> dict[str, Any]:
+    moved = {}
+    for key, value in inputs.items():
+        moved[key] = value.to(device) if hasattr(value, "to") else value
+    return moved
+
+
 class ModelHandler:
     """
-    Model manager with smart memory optimization.
+    Owns the currently resident ML model.
+
+    Only one heavy model is kept in memory at a time. Loading Florence unloads
+    Whisper; loading Whisper unloads Florence. This keeps the process inside a
+    realistic CPU/RAM envelope on local Docker and Hugging Face CPU Spaces.
     """
-    def __init__(self, device):
+
+    def __init__(self, device: str):
         self.device = device
         self.vlm_model = None
         self.vlm_processor = None
         self.audio_model = None
+        self.audio_backend = None
         self._logged_audio_device = False
 
-    def _log_audio_device_profile(self):
-        if self._logged_audio_device or self.device != "cuda":
+    def _log_audio_device_profile(self) -> None:
+        if self._logged_audio_device or self.device != "cuda" or not torch.cuda.is_available():
             return
 
         props = torch.cuda.get_device_properties(0)
@@ -100,107 +154,210 @@ class ModelHandler:
             )
         self._logged_audio_device = True
 
-    def load_vlm(self):
-        """Load Florence-2, unload Whisper if present"""
-        if self.vlm_model is not None: 
+    def unload_vlm(self) -> None:
+        if self.vlm_model is None and self.vlm_processor is None:
+            return
+        logger.info("Unloading Florence model")
+        self.vlm_model = None
+        self.vlm_processor = None
+        _cleanup_memory()
+
+    def unload_audio(self) -> None:
+        if self.audio_model is None:
+            return
+        logger.info("Unloading Whisper model")
+        self.audio_model = None
+        self.audio_backend = None
+        _cleanup_memory()
+
+    def unload_all(self) -> None:
+        self.unload_vlm()
+        self.unload_audio()
+        _cleanup_memory()
+
+    def load_vlm(self) -> None:
+        """Load Florence OCR and unload Whisper if needed."""
+        if self.vlm_model is not None and self.vlm_processor is not None:
             return
 
-        if self.audio_model is not None:
-            logger.info("Unloading Whisper to free VRAM...")
-            del self.audio_model
-            self.audio_model = None
-            gc.collect()
-            torch.cuda.empty_cache()
+        self.unload_audio()
 
-        logger.info("Loading Florence-2...")
-        model_id = "microsoft/Florence-2-large"
-        self.vlm_processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
+        model_id = os.getenv("FLORENCE_MODEL_ID", "microsoft/Florence-2-base").strip()
+        local_files_only = _env_bool("FLORENCE_LOCAL_FILES_ONLY", False) or _env_bool("TRANSFORMERS_OFFLINE", False)
         dtype = torch.float16 if self.device == "cuda" else torch.float32
-        self.vlm_model = AutoModelForCausalLM.from_pretrained(
-            model_id, trust_remote_code=True, torch_dtype=dtype
-        ).to(self.device)
 
-    def load_audio(self):
-        """Load Whisper, unload Florence-2 if present"""
+        logger.info("Loading Florence processor: %s", model_id)
+        self.vlm_processor = AutoProcessor.from_pretrained(
+            model_id,
+            trust_remote_code=True,
+            local_files_only=local_files_only,
+        )
+        logger.info("Florence processor loaded")
+
+        logger.info("Loading Florence model weights: %s", model_id)
+        self.vlm_model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            trust_remote_code=True,
+            torch_dtype=dtype,
+            local_files_only=local_files_only,
+        )
+        logger.info("Florence model weights loaded")
+
+        logger.info("Moving Florence model to device: %s", self.device)
+        self.vlm_model = self.vlm_model.to(self.device)
+        self.vlm_model.eval()
+        logger.info("Florence ready")
+
+    def load_audio(self) -> None:
+        """Load Whisper and unload Florence if needed."""
         if self.audio_model is not None:
             return
 
         self._log_audio_device_profile()
+        self.unload_vlm()
 
-        if self.vlm_model is not None:
-            logger.info("Unloading Florence-2 to free VRAM...")
-            del self.vlm_model
-            del self.vlm_processor
-            self.vlm_model = None
-            self.vlm_processor = None
-            gc.collect()
-            torch.cuda.empty_cache()
+        backend = _env_choice("WHISPER_BACKEND", "openai", {"openai", "faster-whisper"})
+        model_size = os.getenv("WHISPER_MODEL_SIZE", "small").strip()
 
-        # Aggressive memory cleanup before loading Whisper
-        if self.device == "cuda":
-            logger.info(f"Pre-load GPU memory: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB allocated")
-            gc.collect()
-            torch.cuda.empty_cache()
-            torch.cuda.reset_peak_memory_stats()
-            logger.info(f"After cleanup: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB allocated")
+        if backend == "faster-whisper":
+            if FasterWhisperModel is None:
+                raise RuntimeError(
+                    "WHISPER_BACKEND=faster-whisper requires the faster-whisper package. "
+                    "Install it or set WHISPER_BACKEND=openai."
+                )
+            compute_type = os.getenv("WHISPER_COMPUTE_TYPE", "int8").strip()
+            device = "cuda" if self.device == "cuda" else "cpu"
+            logger.info(
+                "Loading faster-whisper model: size=%s device=%s compute_type=%s",
+                model_size,
+                device,
+                compute_type,
+            )
+            self.audio_model = FasterWhisperModel(model_size, device=device, compute_type=compute_type)
+            self.audio_backend = "faster-whisper"
+            logger.info("faster-whisper ready")
+            return
 
-        logger.info("Loading Whisper...")
-        self.audio_model = whisper.load_model("medium", device=self.device)
+        if openai_whisper is None:
+            raise RuntimeError(
+                "WHISPER_BACKEND=openai requires the openai-whisper package. "
+                "Install it or set WHISPER_BACKEND=faster-whisper."
+            )
 
-def run_florence_ocr(image_path, handler):
-    """Run Florence-2 OCR"""
+        logger.info("Loading OpenAI Whisper model: size=%s device=%s", model_size, self.device)
+        self.audio_model = openai_whisper.load_model(model_size, device=self.device)
+        self.audio_backend = "openai"
+        logger.info("OpenAI Whisper ready")
+
+
+def run_florence_ocr(image_path: str, handler: ModelHandler) -> str:
+    """Run Florence OCR for one image using an already-loaded handler."""
     try:
-        image = Image.open(image_path).convert("RGB")
-        task = "<OCR>"
+        max_new_tokens = _env_int("OCR_MAX_NEW_TOKENS", 256, minimum=16)
+        num_beams = _env_int("OCR_NUM_BEAMS", 1, minimum=1)
+
+        logger.info("Opening image for OCR: %s", image_path)
+        with Image.open(image_path) as source_image:
+            image = source_image.convert("RGB")
+
+        task = os.getenv("FLORENCE_OCR_TASK", "<OCR>").strip() or "<OCR>"
+        logger.info("Preparing Florence OCR inputs")
         inputs = handler.vlm_processor(text=task, images=image, return_tensors="pt")
-        inputs = {k: v.to(handler.device) for k, v in inputs.items()}
+        inputs = _move_inputs_to_device(inputs, handler.device)
 
         if handler.device == "cuda" and handler.vlm_model.dtype == torch.float16:
             inputs["pixel_values"] = inputs["pixel_values"].to(torch.float16)
 
-        generated = handler.vlm_model.generate(
-            input_ids=inputs["input_ids"],
-            pixel_values=inputs["pixel_values"],
-            max_new_tokens=1024,
-            num_beams=3
+        logger.info(
+            "Running Florence generate(): max_new_tokens=%s num_beams=%s",
+            max_new_tokens,
+            num_beams,
         )
+        with torch.inference_mode():
+            generated = handler.vlm_model.generate(
+                input_ids=inputs["input_ids"],
+                pixel_values=inputs["pixel_values"],
+                max_new_tokens=max_new_tokens,
+                num_beams=num_beams,
+                do_sample=False,
+            )
+        logger.info("Florence generate() complete")
 
+        logger.info("Decoding Florence output")
         text = handler.vlm_processor.batch_decode(generated, skip_special_tokens=False)[0]
-        parsed = handler.vlm_processor.post_process_generation(
-            text, task=task, image_size=(image.width, image.height)
-        )
-        return parsed.get("<OCR>", "")
-    except Exception as e:
-        logger.error(f"OCR error on {image_path}: {e}")
-        return ""
 
-def run_whisper_audio(audio_path, handler):
-    """Run Whisper transcription"""
-    try:
-        command = [
-            _FFMPEG_EXECUTABLE,
-            "-nostdin",
-            "-threads", "0",
-            "-i", audio_path,
-            "-f", "s16le",
-            "-ac", "1",
-            "-acodec", "pcm_s16le",
-            "-ar", str(whisper.audio.SAMPLE_RATE),
-            "-",
-        ]
-        decoded_audio = subprocess.run(
-            command,
-            capture_output=True,
-            check=True,
-        ).stdout
-        waveform = (
-            np.frombuffer(decoded_audio, np.int16)
-            .flatten()
-            .astype(np.float32)
-            / 32768.0
+        logger.info("Post-processing Florence output")
+        parsed = handler.vlm_processor.post_process_generation(
+            text,
+            task=task,
+            image_size=(image.width, image.height),
         )
-        result = handler.audio_model.transcribe(waveform)
-        return result["text"].strip()
-    except Exception as e:
-        logger.warning(f"Audio error on {audio_path}: {e}")
+        return parsed.get(task, "") or parsed.get("<OCR>", "")
+    except Exception as exc:
+        logger.error("OCR error on %s: %s", image_path, exc)
         return ""
+    finally:
+        try:
+            del inputs
+        except UnboundLocalError:
+            pass
+        try:
+            del generated
+        except UnboundLocalError:
+            pass
+        try:
+            del image
+        except UnboundLocalError:
+            pass
+        _cleanup_memory()
+
+
+def _decode_audio_for_openai_whisper(audio_path: str) -> np.ndarray:
+    if openai_whisper is None:
+        raise RuntimeError("openai-whisper is not installed")
+
+    command = [
+        _FFMPEG_EXECUTABLE,
+        "-nostdin",
+        "-threads",
+        "0",
+        "-i",
+        audio_path,
+        "-f",
+        "s16le",
+        "-ac",
+        "1",
+        "-acodec",
+        "pcm_s16le",
+        "-ar",
+        str(openai_whisper.audio.SAMPLE_RATE),
+        "-",
+    ]
+    decoded_audio = subprocess.run(command, capture_output=True, check=True).stdout
+    return np.frombuffer(decoded_audio, np.int16).flatten().astype(np.float32) / 32768.0
+
+
+def run_whisper_audio(audio_path: str, handler: ModelHandler) -> str:
+    """Run Whisper transcription for one audio/video file."""
+    try:
+        if handler.audio_backend == "faster-whisper":
+            beam_size = _env_int("WHISPER_BEAM_SIZE", 1, minimum=1)
+            logger.info("Running faster-whisper transcription: beam_size=%s", beam_size)
+            segments, _info = handler.audio_model.transcribe(audio_path, beam_size=beam_size)
+            return " ".join(segment.text.strip() for segment in segments if segment.text).strip()
+
+        logger.info("Decoding audio for OpenAI Whisper")
+        waveform = _decode_audio_for_openai_whisper(audio_path)
+        logger.info("Running OpenAI Whisper transcription")
+        result = handler.audio_model.transcribe(
+            waveform,
+            fp16=(handler.device == "cuda" and _env_bool("WHISPER_OPENAI_FP16", True)),
+        )
+        return result.get("text", "").strip()
+    except Exception as exc:
+        logger.warning("Audio error on %s: %s", audio_path, exc)
+        return ""
+    finally:
+        if "waveform" in locals():
+            del waveform
+        _cleanup_memory()

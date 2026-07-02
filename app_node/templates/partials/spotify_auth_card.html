@@ -25,13 +25,13 @@
   </ol>
   <div class="button-row">
     <a class="button" href="{{ session.authorization_url }}" data-spotify-auth-url>Open Spotify authorization</a>
-    <button class="button button--ghost" hx-get="{{ poll_url }}" hx-target="#music-task-panel" hx-swap="innerHTML">
+    <button class="button button--ghost" hx-get="{{ poll_url }}" hx-target="#music-library-auth-panel" hx-swap="innerHTML">
       Check Status
     </button>
   </div>
   <details class="trouble-panel">
     <summary>Having trouble?</summary>
-    <form class="stack-form compact-form" hx-post="/ui/music/user/auth/complete" hx-target="#music-task-panel" hx-swap="innerHTML" hx-disabled-elt="find button" hx-indicator="find .submit-indicator">
+    <form class="stack-form compact-form" hx-post="/ui/music/user/auth/complete" hx-target="#music-library-auth-panel" hx-swap="innerHTML" hx-disabled-elt="find button" hx-indicator="find .submit-indicator">
       <input type="hidden" name="auth_session_id" value="{{ session.id }}">
       <div class="field">
         <label class="label" for="spotify-redirect-url">Redirect URL or code</label>

@@ -11,8 +11,8 @@
       <span class="task-card__kicker">{{ title or "Task" }}</span>
       <h3>{{ display_name }}</h3>
     </div>
-    <span class="status-pill status-pill--{% if task.status == 'completed' %}success{% elif task.status == 'failed' %}danger{% elif task.status == 'cancelled' %}warning{% elif task.status == 'running' %}accent{% else %}muted{% endif %}">
-      {{ task.status }}
+    <span class="status-pill status-pill--{{ display_status_variant }}">
+      {{ display_status_label }}
     </span>
   </div>
 
@@ -22,8 +22,24 @@
       <span class="meta-grid__value">{{ item_detail }}</span>
     </div>
     <div>
-      <span class="meta-grid__label">Queue position</span>
-      <span class="meta-grid__value">{{ task.queue_position if task.queue_position else "Now" }}</span>
+      <span class="meta-grid__label">Lane</span>
+      <span class="meta-grid__value">{{ lane_label or "Default" }}</span>
+    </div>
+    <div>
+      <span class="meta-grid__label">Queue</span>
+      <span class="meta-grid__value">{{ queue_label }}</span>
+    </div>
+    <div>
+      <span class="meta-grid__label">Wait</span>
+      <span class="meta-grid__value">{{ wait_label or "Now" }}</span>
+    </div>
+    <div>
+      <span class="meta-grid__label">Runtime estimate</span>
+      <span class="meta-grid__value">{{ runtime_label or "Calculating" }}</span>
+    </div>
+    <div>
+      <span class="meta-grid__label">Total ETA</span>
+      <span class="meta-grid__value">{{ total_eta_label or estimate_label or "Calculating" }}</span>
     </div>
     <div>
       <span class="meta-grid__label">Submitted</span>
@@ -41,19 +57,32 @@
       <span class="meta-grid__label">Duration</span>
       <span class="meta-grid__value">{{ duration_label or "In progress" }}</span>
     </div>
-    <div>
-      <span class="meta-grid__label">Estimate</span>
-      <span class="meta-grid__value">{{ estimate_label or "Calculating" }}</span>
-    </div>
   </div>
 
-  <div class="progress-strip">
-    <span class="progress-step {% if task.status in ['queued', 'running', 'completed', 'failed', 'cancelled'] %}is-complete{% endif %} {% if task.status == 'queued' %}is-current{% endif %}">Queued</span>
-    <span class="progress-bar {% if task.status in ['running', 'completed', 'failed', 'cancelled'] %}is-filled{% endif %}"></span>
-    <span class="progress-step {% if task.status in ['running', 'completed', 'failed', 'cancelled'] %}is-complete{% endif %} {% if task.status == 'running' %}is-current{% endif %}">Running</span>
-    <span class="progress-bar {% if task.status in ['completed', 'failed', 'cancelled'] %}is-filled{% endif %}"></span>
-    <span class="progress-step {% if task.status in ['completed', 'failed', 'cancelled'] %}is-complete{% endif %} {% if task.status in ['completed', 'failed', 'cancelled'] %}is-current{% endif %}">Finished</span>
+  {% if queue_message %}
+  <div class="callout callout--compact">
+    <strong>Queue status</strong>
+    <p>{{ queue_message }}</p>
   </div>
+  {% endif %}
+
+  <div class="progress-strip">
+    <span class="progress-step {% if display_status in ['queued', 'running', 'completed', 'failed', 'cancelled', 'needs_review'] %}is-complete{% endif %} {% if display_status == 'queued' %}is-current{% endif %}">Queued</span>
+    <span class="progress-bar {% if display_status in ['running', 'completed', 'failed', 'cancelled', 'needs_review'] %}is-filled{% endif %}"></span>
+    <span class="progress-step {% if display_status in ['running', 'completed', 'failed', 'cancelled', 'needs_review'] %}is-complete{% endif %} {% if display_status == 'running' %}is-current{% endif %}">Running</span>
+    <span class="progress-bar {% if display_status in ['completed', 'failed', 'cancelled', 'needs_review'] %}is-filled{% endif %} {% if is_needs_review %}is-warning{% endif %}"></span>
+    <span class="progress-step {% if display_status in ['completed', 'failed', 'cancelled'] %}is-complete{% endif %} {% if display_status in ['completed', 'failed', 'cancelled'] %}is-current{% endif %} {% if is_needs_review %}is-current is-warning{% endif %}">{{ progress_terminal_label }}</span>
+  </div>
+
+  {% if current_activity and not task_events %}
+  <section class="task-card__section">
+    <div class="section-head section-head--compact">
+      <h4>Current Activity</h4>
+      <span class="panel__meta">{{ timezone_label }}</span>
+    </div>
+    <p class="panel__meta">{{ current_activity }}</p>
+  </section>
+  {% endif %}
 
   {% if task_events %}
   <section class="task-card__section">
@@ -89,7 +118,7 @@
   </div>
   {% endif %}
 
-  {% if task.artifacts %}
+  {% if show_artifacts_in_card %}
   <section class="task-card__section">
     <div class="section-head section-head--compact">
       <h4>Artifacts</h4>
@@ -131,7 +160,8 @@
           hx-swap="innerHTML"
           hx-disabled-elt="find button"
           hx-indicator="find .submit-indicator"
-          data-submit-label="Preparing download...">
+          data-submit-label="Preparing download..."
+          data-reset-music-selection-on-success>
           <input type="hidden" name="container_id" value="{{ playlist_target_id.lstrip('#') }}">
           {% for candidate in item.candidates %}
           <label class="candidate-row">
@@ -164,3 +194,7 @@
 
   
 </article>
+
+{% if music_download_tray_oob %}
+{% include "partials/music_download_tray.html" %}
+{% endif %}

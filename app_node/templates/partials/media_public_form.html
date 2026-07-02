@@ -1,8 +1,14 @@
 <div class="section-head section-head--compact">
   <h3>Public User</h3>
-  <p>Scrape a public Instagram profile and process the first N posts.</p>
+  <p>Scrape a public Instagram profile and process the first N posts using your connected Instagram browser session.</p>
 </div>
-<form class="stack-form" hx-post="/ui/media/public-user/submit" hx-target="#media-task-panel" hx-swap="innerHTML" hx-disabled-elt="find button" hx-indicator="find .submit-indicator">
+<div
+  id="instagram-auth-panel"
+  hx-get="/ui/media/instagram/auth/panel"
+  hx-trigger="load"
+  hx-swap="innerHTML">
+</div>
+<form class="stack-form" hx-post="/ui/media/public-user/submit" hx-target="#media-instagram-public-profile-task-panel" hx-swap="innerHTML" hx-disabled-elt="find button" hx-indicator="find .submit-indicator">
   <div class="field">
     <label class="label" for="media-public-username">Instagram username</label>
     <input class="input" type="text" id="media-public-username" name="username" placeholder="gingerpotter21">

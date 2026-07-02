@@ -4,26 +4,43 @@ Server-rendered UI routes and HTMX partials for Gateway Console.
 from __future__ import annotations
 
 from datetime import datetime
+from uuid import uuid4
 import json
 import re
 from typing import Optional
+
+from markupsafe import Markup
 from urllib.parse import parse_qs, urlparse
 
 from fastapi import APIRouter, HTTPException, Request, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from ..auth_sessions import spotify_auth_sessions
 from ..input_resolver import InputResolutionError, resolve_multi_input
+from ..music_download_tray import collect_music_downloads
+from ..ui_session_state import (
+    get_ui_state,
+    remember_media_task,
+    remember_music_auth_session,
+    remember_music_task,
+    set_instagram_active_mode,
+    set_media_active_form,
+    set_music_active_form,
+)
 from ..instagram_sessions import SESSION_HEADER
 from ..settings import (
+    INSTAGRAM_AUTH_BROWSER_ENABLED,
     MEDIA_NODE_ENABLED,
     MUSIC_NODE_ENABLED,
     NAVIDROME_ENABLED,
+    NOVNC_ENABLED,
+    NOVNC_PUBLIC_URL,
     ROOT_DIR,
     TELEGRAM_NODE_ENABLED,
 )
 from ..tasks import (
+    all_tasks,
     cancel_task,
     get_queue_summary,
     get_task,
@@ -37,7 +54,8 @@ from . import telegram as telegram_api
 
 router = APIRouter(tags=["UI"])
 templates = Jinja2Templates(directory=str(ROOT_DIR / "app_node" / "templates"))
-
+INSTAGRAM_AUTH_TASK_COOKIE = "gateway_instagram_auth_task_id"
+UI_SESSION_COOKIE = "gateway_client_session_id"
 GITHUB_URL = "https://github.com/Sanathnavada/Code"
 INSTAGRAM_POST_URL_RE = re.compile(
     r"https?://(?:www\.)?instagram\.com/(?:p|reel|tv)/[A-Za-z0-9_-]+/?(?:\?[^ \t\r\n<>'\"]*)?",
@@ -54,6 +72,37 @@ def _feature_flags() -> dict[str, bool]:
     }
 
 
+
+def _template_context(request: Request, active_page: str = "", **context) -> dict:
+    base_context = {
+        "request": request,
+        "active_page": active_page,
+        "github_url": GITHUB_URL,
+        "feature_flags": _feature_flags(),
+    }
+    base_context.update(context)
+    return base_context
+
+
+def _render_fragment(request: Request, template_name: str, **context) -> Markup:
+    template = templates.env.get_template(template_name)
+    return Markup(template.render(_template_context(request, **context)))
+
+def _attach_ui_session_cookie(request: Request, response):
+    session_id = request.headers.get(SESSION_HEADER) or request.cookies.get(UI_SESSION_COOKIE)
+    if not session_id:
+        session_id = uuid4().hex
+    response.set_cookie(
+        UI_SESSION_COOKIE,
+        session_id,
+        max_age=60 * 60 * 24 * 7,
+        path="/",
+        samesite="lax",
+        httponly=False,
+    )
+    return response
+
+
 def _render(request: Request, template_name: str, **context):
     base_context = {
         "request": request,
@@ -62,11 +111,12 @@ def _render(request: Request, template_name: str, **context):
         "feature_flags": _feature_flags(),
     }
     base_context.update(context)
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request=request,
         name=template_name,
         context=base_context,
     )
+    return _attach_ui_session_cookie(request, response)
 
 
 def _task_page_url(task_id: str) -> str:
@@ -83,6 +133,39 @@ def _artifact_list_url(task_id: str) -> str:
 
 def _request_client_id(request: Request) -> Optional[str]:
     return request.client.host if request.client else None
+
+
+def _ui_session_id(request: Request) -> Optional[str]:
+    return (
+        request.headers.get(SESSION_HEADER)
+        or request.cookies.get(UI_SESSION_COOKIE)
+        or _request_client_id(request)
+    )
+
+
+def _music_session_id(request: Request) -> Optional[str]:
+    return _ui_session_id(request)
+
+
+def _music_task_meta(request: Request, workflow_label: str, item_label: str, item_detail: str, **extra) -> dict:
+    return _job_meta(
+        workflow_label,
+        item_label,
+        item_detail,
+        music_session_id=_music_session_id(request),
+        music_client_id=_request_client_id(request),
+        **extra,
+    )
+
+
+def _music_download_tray_context(request: Request, *, oob: bool = False) -> dict:
+    return {
+        "music_downloads": collect_music_downloads(
+            _music_session_id(request),
+            client_id=_request_client_id(request),
+        ),
+        "music_download_tray_oob": oob,
+    }
 
 
 def _format_task_time(value: Optional[str], *, include_zone: bool = True) -> str:
@@ -166,6 +249,40 @@ def _task_result_items(task) -> list[dict]:
     return task.result.get("items", [])[:8]
 
 
+def _task_display_status(task) -> str:
+    return str(task.meta.get("display_status") or task.status)
+
+
+def _task_status_label(display_status: str) -> str:
+    return display_status.replace("_", " ")
+
+
+def _task_status_variant(display_status: str) -> str:
+    if display_status == "completed":
+        return "success"
+    if display_status == "failed":
+        return "danger"
+    if display_status in {"cancelled", "needs_review"}:
+        return "warning"
+    if display_status == "running":
+        return "accent"
+    return "muted"
+
+
+def _task_queue_label(task, display_status: str) -> str:
+    if display_status == "needs_review":
+        return "Review"
+    return task.queue_position if task.queue_position else "Now"
+
+
+def _show_task_artifacts(task, *, on_detail_page: bool) -> bool:
+    if not task.artifacts:
+        return False
+    if task.service.startswith("music.") and not on_detail_page:
+        return False
+    return True
+
+
 def _media_meta(workflow_label: str, item_label: str, item_detail: str, **extra) -> dict:
     return {
         "workflow_label": workflow_label,
@@ -200,6 +317,12 @@ def _task_view_model(task, *, container_id: str) -> dict:
         minutes, seconds = divmod(delta, 60)
         duration = f"{minutes}m {seconds:02d}s" if minutes else f"{seconds}s"
 
+    display_status = _task_display_status(task)
+    on_detail_page = container_id == "task-detail-panel"
+    queue_message = task.meta.get("queue_message")
+    if display_status == "needs_review":
+        queue_message = "Needs review: choose the correct candidate match below to finish the remaining item(s)."
+
     playlists = []
     if (
         task.service == "music.user_playlists"
@@ -225,11 +348,26 @@ def _task_view_model(task, *, container_id: str) -> dict:
         "task_card_url": _task_card_url(task.id, container_id),
         "task_page_url": _task_page_url(task.id),
         "artifact_list_url": _artifact_list_url(task.id),
-        "is_detail_view": container_id == "task-detail-panel",
+        "is_detail_view": on_detail_page,
         "is_polling": task.status in {"queued", "running"},
         "poll_interval_seconds": _poll_interval_seconds(task),
+        "display_status": display_status,
+        "display_status_label": _task_status_label(display_status),
+        "display_status_variant": _task_status_variant(display_status),
+        "is_needs_review": display_status == "needs_review",
+        "queue_label": _task_queue_label(task, display_status),
+        "progress_terminal_label": "Review" if display_status == "needs_review" else "Finished",
+        "show_artifacts_in_card": _show_task_artifacts(task, on_detail_page=on_detail_page),
         "duration_label": duration,
-        "estimate_label": _format_duration_seconds(task.meta.get("estimated_transcription_seconds")),
+        "estimate_label": task.meta.get("estimated_total_label") or _format_duration_seconds(task.meta.get("estimated_transcription_seconds")),
+        "wait_label": task.meta.get("estimated_wait_label"),
+        "runtime_label": task.meta.get("estimated_runtime_label"),
+        "remaining_label": task.meta.get("estimated_remaining_label"),
+        "total_eta_label": task.meta.get("estimated_total_label"),
+        "queue_message": queue_message,
+        "current_activity": task.meta.get("current_activity"),
+        "capacity": task.meta.get("capacity") or {},
+        "lane_label": task.meta.get("lane_label"),
         "display_name": _task_display_name(task),
         "item_label": _task_item_label(task),
         "item_detail": _task_item_detail(task),
@@ -258,12 +396,260 @@ def _render_error_panel(request: Request, message: str, title: str = "Request Er
     return response
 
 
+def _session_dir_from_request_or_task(request: Request, task=None):
+    session_id = request.headers.get(SESSION_HEADER)
+    if not session_id and task is not None:
+        session_id = task.meta.get("client_session_id")
+    return media_api._session_dir(session_id)
+
+
+
+
+def _active_instagram_auth_tasks_for_session(client_session_id: Optional[str]) -> list:
+    return [
+        task for task in all_tasks()
+        if task.service == "media.instagram_auth"
+        and task.status in {"queued", "running"}
+        and task.meta.get("client_session_id") == client_session_id
+    ]
+
+
+async def _stop_active_instagram_auth_for_session(client_session_id: Optional[str], session_dir) -> None:
+    for task in _active_instagram_auth_tasks_for_session(client_session_id):
+        media_api._request_instagram_auth_cancel(session_dir, task.id)
+        await cancel_task(task.id)
+
+def _render_instagram_auth_panel(
+    request: Request,
+    *,
+    auth_task_id: Optional[str] = None,
+    open_popup: bool = False,
+    status_checked: bool = False,
+    reset_done: bool = False,
+):
+    task = get_task(auth_task_id) if auth_task_id else None
+    session_dir = _session_dir_from_request_or_task(request, task)
+    auth_status = media_api._instagram_auth_status(session_dir)
+
+    # Keep the internal auth task id out of the visible popup URL.
+    # The popup resolves the active auth task from this browser's short-lived cookie.
+    auth_window_url = "/ui/media/instagram/auth/window" if auth_task_id else ""
+    poll_url = f"/ui/media/instagram/auth/session/{auth_task_id}/card" if auth_task_id else ""
+    close_url = "/ui/media/instagram/auth/session/close" if auth_task_id else ""
+
+    return _render(
+        request,
+        "partials/instagram_auth_panel.html",
+        auth_status=auth_status,
+        auth_task=task,
+        auth_task_id=auth_task_id,
+        auth_window_url=auth_window_url,
+        auth_poll_url=poll_url,
+        auth_close_url=close_url,
+        open_popup=open_popup,
+        status_checked=status_checked,
+        reset_done=reset_done,
+        checked_at=datetime.now().astimezone().strftime("%I:%M:%S %p %Z").lstrip("0"),
+        novnc_url=NOVNC_PUBLIC_URL,
+        novnc_enabled=NOVNC_ENABLED,
+        auth_browser_enabled=INSTAGRAM_AUTH_BROWSER_ENABLED,
+    )
+
+
+def _render_instagram_auth_required(request: Request, workflow_label: str):
+    return _render_error_panel(
+        request,
+        f"Connect Instagram before running {workflow_label}.",
+        title="Instagram Login Required",
+        status_code=status.HTTP_409_CONFLICT,
+    )
+
+
+def _is_instagram_authenticated_for_request(request: Request) -> bool:
+    session_dir = media_api._session_dir(request.headers.get(SESSION_HEADER))
+    return media_api._is_instagram_authenticated(session_dir)
+
+
+
+
+def _empty_task_panel_html(request: Request, *, title: str, body: str) -> Markup:
+    return _render_fragment(
+        request,
+        "partials/empty_task_panel.html",
+        empty_title=title,
+        empty_body=body,
+    )
+
+
+def _stale_or_empty_task_panel_html(request: Request, task_id: Optional[str], *, title: str, body: str) -> Markup:
+    if not task_id:
+        return _empty_task_panel_html(request, title=title, body=body)
+    task = get_task(task_id)
+    if not task:
+        return _empty_task_panel_html(request, title=title, body=body)
+    return _task_panel_html(request, task_id, title=title, container_id="task-panel")
+
+
+def _task_panel_html(
+    request: Request,
+    task_id: Optional[str],
+    *,
+    title: str,
+    container_id: str,
+    include_music_tray_oob: bool = False,
+) -> Markup:
+    if not task_id:
+        return Markup("")
+    task = get_task(task_id)
+    if not task:
+        return _render_fragment(request, "partials/stale_task_card.html")
+    view_model = _task_view_model(task, container_id=container_id)
+    if include_music_tray_oob and task.service.startswith("music."):
+        view_model.update(_music_download_tray_context(request, oob=True))
+    if (
+        task.service == "music.user_playlists"
+        and task.status == "completed"
+        and view_model["playlist_options"]
+    ):
+        view_model["playlist_target_id"] = "#music-library-task-panel"
+        return _render_fragment(
+            request,
+            "partials/spotify_library_panel.html",
+            title=title,
+            **view_model,
+        )
+    return _render_fragment(
+        request,
+        "partials/task_card.html",
+        title=title,
+        **view_model,
+    )
+
+
+def _spotify_auth_panel_html(request: Request, auth_session_id: Optional[str]) -> Markup:
+    if not auth_session_id:
+        return Markup("")
+    session = spotify_auth_sessions.get_session(auth_session_id)
+    if not session:
+        return _render_fragment(request, "partials/stale_auth_card.html")
+    return _render_fragment(
+        request,
+        "partials/spotify_auth_card.html",
+        session=session,
+        poll_url=f"/ui/music/auth/session/{session.id}/card",
+        redirect_uri=spotify_auth_sessions.redirect_uri,
+    )
+
+
+def _music_workspace_context(request: Request) -> dict:
+    state = get_ui_state(_ui_session_id(request)).get("music", {})
+    active_form = state.get("active_form") or "download"
+    if active_form not in {"download", "spotify-library"}:
+        active_form = "download"
+    form_template = (
+        "partials/music_spotify_auth_form.html"
+        if active_form == "spotify-library"
+        else "partials/music_song_form.html"
+    )
+    return {
+        "music_active_form": active_form,
+        "music_form_template": form_template,
+        "music_task_panel_html": _task_panel_html(
+            request,
+            state.get("task_panel_task_id"),
+            title="Music Task",
+            container_id="music-task-panel",
+        ) if state.get("task_panel_task_id") else _empty_task_panel_html(
+            request,
+            title="No music task yet",
+            body="Submit a song, YouTube, or Spotify workflow to start a queued download or auth-guided process.",
+        ),
+        "music_library_auth_panel_html": _spotify_auth_panel_html(
+            request,
+            state.get("library_auth_session_id"),
+        ),
+        "music_library_panel_html": _task_panel_html(
+            request,
+            state.get("library_panel_task_id"),
+            title="Spotify Library Task",
+            container_id="music-library-panel",
+        ) if state.get("library_panel_task_id") else Markup(""),
+        "music_library_task_panel_html": _task_panel_html(
+            request,
+            state.get("library_task_panel_task_id"),
+            title="Music Task",
+            container_id="music-library-task-panel",
+        ) if state.get("library_task_panel_task_id") else Markup(""),
+    }
+
+
+def _media_workspace_context(request: Request) -> dict:
+    state = get_ui_state(_ui_session_id(request)).get("media", {})
+    active_form = state.get("active_form") or "youtube"
+    if active_form not in {"youtube", "instagram"}:
+        active_form = "youtube"
+    instagram_mode = state.get("instagram_active_mode") or "posts"
+    if instagram_mode not in {"posts", "public_profile", "private_collection"}:
+        instagram_mode = "posts"
+    form_template = (
+        "partials/media_instagram_form.html"
+        if active_form == "instagram"
+        else "partials/media_youtube_form.html"
+    )
+    return {
+        "media_active_form": active_form,
+        "media_form_template": form_template,
+        "instagram_active_mode": instagram_mode,
+        "media_youtube_panel_html": _task_panel_html(
+            request,
+            state.get("youtube_task_id"),
+            title="Media Task",
+            container_id="media-youtube-task-panel",
+        ) if state.get("youtube_task_id") else _empty_task_panel_html(
+            request,
+            title="No YouTube task yet",
+            body="Submit a YouTube workflow and the queue-aware task card will appear here.",
+        ),
+        "media_instagram_posts_panel_html": _task_panel_html(
+            request,
+            state.get("instagram_posts_task_id"),
+            title="Media Task",
+            container_id="media-instagram-posts-task-panel",
+        ) if state.get("instagram_posts_task_id") else _empty_task_panel_html(
+            request,
+            title="No post task yet",
+            body="Submit Instagram post or reel URLs to start a task.",
+        ),
+        "media_instagram_public_panel_html": _task_panel_html(
+            request,
+            state.get("instagram_public_profile_task_id"),
+            title="Media Task",
+            container_id="media-instagram-public-profile-task-panel",
+        ) if state.get("instagram_public_profile_task_id") else _empty_task_panel_html(
+            request,
+            title="No public profile task yet",
+            body="Submit a public profile to start a task.",
+        ),
+        "media_instagram_private_panel_html": _task_panel_html(
+            request,
+            state.get("instagram_private_collection_task_id"),
+            title="Media Task",
+            container_id="media-instagram-private-collection-task-panel",
+        ) if state.get("instagram_private_collection_task_id") else _empty_task_panel_html(
+            request,
+            title="No private collection task yet",
+            body="Submit a saved collection to start a task.",
+        ),
+    }
+
 def _render_task_card(request: Request, task_id: str, *, title: Optional[str] = None,
                       container_id: str = "task-panel"):
     task = get_task(task_id)
     if not task:
         raise HTTPException(404, f"Task '{task_id}' not found.")
     view_model = _task_view_model(task, container_id=container_id)
+    if task.service.startswith("music."):
+        view_model.update(_music_download_tray_context(request, oob=True))
     if (
         task.service == "music.user_playlists"
         and task.status == "completed"
@@ -342,8 +728,8 @@ def _task_summary_cards():
             "variant": "success" if summary["queued_jobs"] == 0 else "warning",
         },
         {
-            "label": "Worker",
-            "value": "Available" if summary["running_jobs"] == 0 else "Busy",
+            "label": "Workers",
+            "value": "Available" if summary["running_jobs"] == 0 else f"{summary['running_jobs']} running",
             "variant": "success" if summary["running_jobs"] == 0 else "accent",
         },
     ]
@@ -367,6 +753,7 @@ async def media_page(request: Request):
         request,
         "pages/media.html",
         active_page="media",
+        **_media_workspace_context(request),
     )
 
 
@@ -378,6 +765,8 @@ async def music_page(request: Request):
         request,
         "pages/music.html",
         active_page="music",
+        **_music_workspace_context(request),
+        **_music_download_tray_context(request),
     )
 
 
@@ -421,6 +810,10 @@ async def system_status_partial(request: Request):
 async def media_form_partial(request: Request, workflow: str):
     if not MEDIA_NODE_ENABLED:
         raise HTTPException(404, "Media node is disabled.")
+    if workflow == "youtube":
+        set_media_active_form(_ui_session_id(request), "youtube")
+    elif workflow in {"instagram", "post", "public-user", "private-user", "bulk"}:
+        set_media_active_form(_ui_session_id(request), "instagram")
     template_map = {
         "youtube": "partials/media_youtube_form.html",
         "instagram": "partials/media_instagram_form.html",
@@ -432,13 +825,176 @@ async def media_form_partial(request: Request, workflow: str):
     template_name = template_map.get(workflow)
     if not template_name:
         raise HTTPException(404, "Unknown media workflow.")
-    return _render(request, template_name)
+    media_state = get_ui_state(_ui_session_id(request)).get("media", {})
+    return _render(
+        request,
+        template_name,
+        instagram_active_mode=media_state.get("instagram_active_mode", "posts"),
+    )
+
+
+@router.get("/ui/media/instagram/auth/panel", response_class=HTMLResponse)
+async def instagram_auth_panel(request: Request, checked: bool = False):
+    if not MEDIA_NODE_ENABLED:
+        raise HTTPException(404, "Media node is disabled.")
+    return _render_instagram_auth_panel(request, status_checked=checked)
+
+
+@router.post("/ui/media/instagram/auth/start", response_class=HTMLResponse)
+async def instagram_auth_start_submit(request: Request):
+    if not MEDIA_NODE_ENABLED:
+        raise HTTPException(404, "Media node is disabled.")
+    if not INSTAGRAM_AUTH_BROWSER_ENABLED:
+        return _render_error_panel(
+            request,
+            "Instagram browser authentication is disabled for this deployment.",
+            title="Instagram Login Unavailable",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    client_session_id = request.headers.get(SESSION_HEADER)
+    session_dir = media_api._session_dir(client_session_id)
+
+    # A manually closed/reopened login popup should not leave an old headed
+    # Chromium auth job alive in the shared VNC display. Stop any previous
+    # auth attempt for this browser session before starting a fresh one.
+    await _stop_active_instagram_auth_for_session(client_session_id, session_dir)
+    media_api._clear_instagram_auth_cancel(session_dir, "")
+    task = await submit_bound_job(
+        "media.instagram_auth",
+        lambda task: media_api._instagram_auth_job(task.id, session_dir),
+        submitted_by=_request_client_id(request),
+        meta=_media_meta(
+            "Instagram login",
+            "Auth browser",
+            "Complete login in the popup console"
+            if NOVNC_ENABLED else
+            "Complete login in the local Chromium window",
+            client_session_id=client_session_id,
+        ),
+    )
+    response = _render_instagram_auth_panel(
+        request,
+        auth_task_id=task.id,
+        open_popup=True,
+    )
+    response.set_cookie(
+        INSTAGRAM_AUTH_TASK_COOKIE,
+        task.id,
+        max_age=900,
+        httponly=True,
+        samesite="lax",
+    )
+    return response
+
+
+@router.get("/ui/media/instagram/auth/session/{auth_task_id}/card", response_class=HTMLResponse)
+async def instagram_auth_session_card(request: Request, auth_task_id: str):
+    if not MEDIA_NODE_ENABLED:
+        raise HTTPException(404, "Media node is disabled.")
+    task = get_task(auth_task_id)
+    if not task:
+        return _render(request, "partials/stale_task_card.html")
+    return _render_instagram_auth_panel(request, auth_task_id=auth_task_id)
+
+
+@router.get("/ui/media/instagram/auth/session/{auth_task_id}/state")
+async def instagram_auth_session_state(request: Request, auth_task_id: str):
+    task = get_task(auth_task_id)
+    if not task:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={"status": "stale", "authenticated": False, "should_close": False},
+        )
+
+    session_dir = _session_dir_from_request_or_task(request, task)
+    auth_status = media_api._instagram_auth_status(session_dir)
+    task_status = task.status
+    should_close = bool(auth_status.get("authenticated") or task_status in {"completed", "failed", "cancelled"})
+    return {
+        "status": task_status,
+        "authenticated": bool(auth_status.get("authenticated")),
+        "username": auth_status.get("username"),
+        "error": task.error,
+        "should_close": should_close,
+    }
+
+
+@router.get("/ui/media/instagram/auth/window", response_class=HTMLResponse)
+async def instagram_auth_window(request: Request):
+    if not MEDIA_NODE_ENABLED:
+        raise HTTPException(404, "Media node is disabled.")
+
+    auth_task_id = request.cookies.get(INSTAGRAM_AUTH_TASK_COOKIE)
+    if not auth_task_id:
+        raise HTTPException(404, "Instagram auth session not found.")
+
+    task = get_task(auth_task_id)
+    if not task:
+        raise HTTPException(404, "Instagram auth session not found.")
+
+    return _render(
+        request,
+        "pages/instagram_auth_window.html",
+        active_page="media",
+        auth_task=task,
+        auth_task_id=auth_task_id,
+        auth_state_url="/ui/media/instagram/auth/session/state",
+        auth_close_url="/ui/media/instagram/auth/session/close",
+        novnc_url=NOVNC_PUBLIC_URL,
+        novnc_cache_bust=datetime.now().timestamp(),
+        novnc_enabled=NOVNC_ENABLED,
+    )
+
+
+@router.get("/ui/media/instagram/auth/session/state", response_class=JSONResponse)
+async def instagram_auth_session_state_from_cookie(request: Request):
+    auth_task_id = request.cookies.get(INSTAGRAM_AUTH_TASK_COOKIE)
+    if not auth_task_id:
+        return {
+            "status": "missing",
+            "authenticated": False,
+            "username": None,
+            "error": "Instagram auth session was not found.",
+            "should_close": False,
+        }
+    return await instagram_auth_session_state(request, auth_task_id)
+
+
+@router.post("/ui/media/instagram/auth/session/close", response_class=JSONResponse)
+async def instagram_auth_session_close(request: Request):
+    if not MEDIA_NODE_ENABLED:
+        raise HTTPException(404, "Media node is disabled.")
+
+    client_session_id = request.headers.get(SESSION_HEADER)
+    session_dir = media_api._session_dir(client_session_id)
+    await _stop_active_instagram_auth_for_session(client_session_id, session_dir)
+    response = JSONResponse({"status": "cancelled"})
+    response.delete_cookie(INSTAGRAM_AUTH_TASK_COOKIE)
+    return response
+
+
+@router.post("/ui/media/instagram/auth/reset", response_class=HTMLResponse)
+async def instagram_auth_reset_submit(request: Request):
+    if not MEDIA_NODE_ENABLED:
+        raise HTTPException(404, "Media node is disabled.")
+    client_session_id = request.headers.get(SESSION_HEADER)
+    session_dir = media_api._session_dir(client_session_id)
+    await _stop_active_instagram_auth_for_session(client_session_id, session_dir)
+    media_api._reset_instagram_auth(session_dir)
+    response = _render_instagram_auth_panel(request, reset_done=True)
+    response.delete_cookie(INSTAGRAM_AUTH_TASK_COOKIE)
+    return response
 
 
 @router.get("/ui/music/forms/{workflow}", response_class=HTMLResponse)
 async def music_form_partial(request: Request, workflow: str):
     if not MUSIC_NODE_ENABLED:
         raise HTTPException(404, "Music node is disabled.")
+    if workflow in {"download", "song", "youtube", "spotify-link"}:
+        set_music_active_form(_ui_session_id(request), "download")
+    elif workflow == "spotify-library":
+        set_music_active_form(_ui_session_id(request), "spotify-library")
     template_map = {
         "download": "partials/music_song_form.html",
         "song": "partials/music_song_form.html",
@@ -450,6 +1006,17 @@ async def music_form_partial(request: Request, workflow: str):
     if not template_name:
         raise HTTPException(404, "Unknown music workflow.")
     return _render(request, template_name)
+
+
+@router.get("/ui/music/downloads/tray", response_class=HTMLResponse)
+async def music_download_tray(request: Request):
+    if not MUSIC_NODE_ENABLED:
+        raise HTTPException(404, "Music node is disabled.")
+    return _render(
+        request,
+        "partials/music_download_tray.html",
+        **_music_download_tray_context(request),
+    )
 
 
 @router.get("/ui/telegram/runtime", response_class=HTMLResponse)
@@ -514,7 +1081,8 @@ async def media_youtube_submit(request: Request):
             submitted_count=len(inputs),
         ),
     )
-    return _render_task_card(request, task.id, title="Media Task", container_id="media-task-panel")
+    remember_media_task(_ui_session_id(request), "youtube", task.id)
+    return _render_task_card(request, task.id, title="Media Task", container_id="media-youtube-task-panel")
 
 
 @router.post("/ui/media/instagram/submit", response_class=HTMLResponse)
@@ -542,6 +1110,8 @@ async def media_instagram_submit(request: Request):
                 submitted_count=len(urls),
             ),
         )
+        set_instagram_active_mode(_ui_session_id(request), "posts")
+        remember_media_task(_ui_session_id(request), "instagram_posts", task.id)
         return _render_task_card(
             request,
             task.id,
@@ -550,6 +1120,8 @@ async def media_instagram_submit(request: Request):
         )
 
     if mode == "public_profile":
+        if not _is_instagram_authenticated_for_request(request):
+            return _render_instagram_auth_required(request, "public profile scraping")
         username = (form.get("username") or "").strip()
         if not username:
             return _render_error_panel(request, "Instagram username is required.")
@@ -572,6 +1144,8 @@ async def media_instagram_submit(request: Request):
                 submitted_count=first_n,
             ),
         )
+        set_instagram_active_mode(_ui_session_id(request), "public_profile")
+        remember_media_task(_ui_session_id(request), "instagram_public_profile", task.id)
         return _render_task_card(
             request,
             task.id,
@@ -580,6 +1154,8 @@ async def media_instagram_submit(request: Request):
         )
 
     if mode == "private_collection":
+        if not _is_instagram_authenticated_for_request(request):
+            return _render_instagram_auth_required(request, "private collection scraping")
         collection = (form.get("collection") or "").strip()
         if not collection:
             return _render_error_panel(request, "Collection name is required.")
@@ -592,6 +1168,8 @@ async def media_instagram_submit(request: Request):
             submitted_by=_request_client_id(request),
             meta=_media_meta("Instagram private collection", "Collection", collection),
         )
+        set_instagram_active_mode(_ui_session_id(request), "private_collection")
+        remember_media_task(_ui_session_id(request), "instagram_private_collection", task.id)
         return _render_task_card(
             request,
             task.id,
@@ -617,7 +1195,9 @@ async def media_post_submit(request: Request):
         submitted_by=_request_client_id(request),
         meta=_media_meta("Instagram post", "Post URL", url),
     )
-    return _render_task_card(request, task.id, title="Media Task", container_id="media-task-panel")
+    set_instagram_active_mode(_ui_session_id(request), "posts")
+    remember_media_task(_ui_session_id(request), "instagram_posts", task.id)
+    return _render_task_card(request, task.id, title="Media Task", container_id="media-instagram-posts-task-panel")
 
 
 @router.post("/ui/media/public-user/submit", response_class=HTMLResponse)
@@ -636,6 +1216,8 @@ async def media_public_submit(request: Request):
         return _render_error_panel(request, str(exc))
 
     session_dir = media_api._session_dir(request.headers.get(SESSION_HEADER))
+    if not media_api._is_instagram_authenticated(session_dir):
+        return _render_instagram_auth_required(request, "public profile scraping")
     task = await submit_bound_job(
         "media.public_user",
         lambda task: media_api._public_user_job(
@@ -649,7 +1231,9 @@ async def media_public_submit(request: Request):
             submitted_count=first_n,
         ),
     )
-    return _render_task_card(request, task.id, title="Media Task", container_id="media-task-panel")
+    set_instagram_active_mode(_ui_session_id(request), "public_profile")
+    remember_media_task(_ui_session_id(request), "instagram_public_profile", task.id)
+    return _render_task_card(request, task.id, title="Media Task", container_id="media-instagram-public-profile-task-panel")
 
 
 @router.post("/ui/media/private-user/submit", response_class=HTMLResponse)
@@ -662,6 +1246,8 @@ async def media_private_submit(request: Request):
         return _render_error_panel(request, "Collection name is required.")
 
     session_dir = media_api._session_dir(request.headers.get(SESSION_HEADER))
+    if not media_api._is_instagram_authenticated(session_dir):
+        return _render_instagram_auth_required(request, "private collection scraping")
     task = await submit_bound_job(
         "media.private_user",
         lambda task: media_api._private_user_job(
@@ -670,7 +1256,9 @@ async def media_private_submit(request: Request):
         submitted_by=_request_client_id(request),
         meta=_media_meta("Private collection scrape", "Collection", collection),
     )
-    return _render_task_card(request, task.id, title="Media Task", container_id="media-task-panel")
+    set_instagram_active_mode(_ui_session_id(request), "private_collection")
+    remember_media_task(_ui_session_id(request), "instagram_private_collection", task.id)
+    return _render_task_card(request, task.id, title="Media Task", container_id="media-instagram-private-collection-task-panel")
 
 
 @router.post("/ui/media/bulk/submit", response_class=HTMLResponse)
@@ -695,7 +1283,9 @@ async def media_bulk_submit(request: Request):
             submitted_count=len(urls),
         ),
     )
-    return _render_task_card(request, task.id, title="Media Task", container_id="media-task-panel")
+    set_instagram_active_mode(_ui_session_id(request), "posts")
+    remember_media_task(_ui_session_id(request), "instagram_posts", task.id)
+    return _render_task_card(request, task.id, title="Media Task", container_id="media-instagram-posts-task-panel")
 
 
 @router.post("/ui/music/song/submit", response_class=HTMLResponse)
@@ -712,13 +1302,15 @@ async def music_song_submit(request: Request):
         "music.song",
         lambda task: music_api._song_job(task.id, queries, None),
         submitted_by=_request_client_id(request),
-        meta=_job_meta(
+        meta=_music_task_meta(
+            request,
             "Music download",
             "Input",
             f"{queries[0]} + {len(queries) - 1} more" if len(queries) > 1 else queries[0],
             submitted_count=len(queries),
         ),
     )
+    remember_music_task(_ui_session_id(request), "task", task.id)
     return _render_task_card(request, task.id, title="Music Task", container_id="music-task-panel")
 
 
@@ -736,13 +1328,15 @@ async def music_yt_submit(request: Request):
         "music.yt",
         lambda task: music_api._yt_job(task.id, inputs, None),
         submitted_by=_request_client_id(request),
-        meta=_job_meta(
+        meta=_music_task_meta(
+            request,
             "YouTube audio download",
             "Input",
             f"{inputs[0]} + {len(inputs) - 1} more" if len(inputs) > 1 else inputs[0],
             submitted_count=len(inputs),
         ),
     )
+    remember_music_task(_ui_session_id(request), "task", task.id)
     return _render_task_card(request, task.id, title="Music Task", container_id="music-task-panel")
 
 
@@ -760,13 +1354,15 @@ async def music_link_submit(request: Request):
         "music.link",
         lambda task: music_api._link_job(task.id, urls, None),
         submitted_by=_request_client_id(request),
-        meta=_job_meta(
+        meta=_music_task_meta(
+            request,
             "Spotify link download",
             "Spotify URL",
             f"{urls[0]} + {len(urls) - 1} more" if len(urls) > 1 else urls[0],
             submitted_count=len(urls),
         ),
     )
+    remember_music_task(_ui_session_id(request), "task", task.id)
     return _render_task_card(request, task.id, title="Music Task", container_id="music-task-panel")
 
 
@@ -774,7 +1370,9 @@ async def music_link_submit(request: Request):
 async def music_auth_start_submit(request: Request):
     if not MUSIC_NODE_ENABLED:
         raise HTTPException(404, "Music node is disabled.")
+    set_music_active_form(_ui_session_id(request), "spotify-library")
     session = spotify_auth_sessions.start_session()
+    remember_music_auth_session(_ui_session_id(request), session.id)
     return _render(
         request,
         "partials/spotify_auth_card.html",
@@ -791,6 +1389,8 @@ async def spotify_auth_card(request: Request, auth_session_id: str):
     session = spotify_auth_sessions.get_session(auth_session_id)
     if not session:
         return _render(request, "partials/stale_auth_card.html")
+    set_music_active_form(_ui_session_id(request), "spotify-library")
+    remember_music_auth_session(_ui_session_id(request), session.id)
     return _render(
         request,
         "partials/spotify_auth_card.html",
@@ -826,6 +1426,8 @@ async def music_auth_complete_submit(request: Request):
     except Exception as exc:
         return _render_error_panel(request, str(exc), title="Spotify Authorization Failed")
 
+    set_music_active_form(_ui_session_id(request), "spotify-library")
+    remember_music_auth_session(_ui_session_id(request), session.id)
     return _render(
         request,
         "partials/spotify_auth_card.html",
@@ -839,6 +1441,7 @@ async def music_auth_complete_submit(request: Request):
 async def music_user_playlists_submit(request: Request):
     if not MUSIC_NODE_ENABLED:
         raise HTTPException(404, "Music node is disabled.")
+    set_music_active_form(_ui_session_id(request), "spotify-library")
     if not spotify_auth_sessions.has_cached_user_token():
         return _render_error_panel(
             request,
@@ -851,7 +1454,16 @@ async def music_user_playlists_submit(request: Request):
         "music.user_playlists",
         lambda task: music_api._user_library_job(),
         submitted_by=_request_client_id(request),
+        meta=_music_task_meta(
+            request,
+            "Spotify library",
+            "Library",
+            "Fetch playlists and tracks",
+            submitted_count=1,
+        ),
     )
+    set_music_active_form(_ui_session_id(request), "spotify-library")
+    remember_music_task(_ui_session_id(request), "library", task.id)
     return _render_task_card(request, task.id, title="Spotify Library Task", container_id="music-library-panel")
 
 
@@ -876,11 +1488,21 @@ async def music_user_download_submit(request: Request):
     except (InputResolutionError, ValueError) as exc:
         return _render_error_panel(request, str(exc))
 
+    submitted_count = len(track_refs) if track_refs else len(selected)
     task = await submit_bound_job(
         "music.user_download",
         lambda task: music_api._user_download_job(task.id, selected, None, track_refs),
         submitted_by=_request_client_id(request),
+        meta=_music_task_meta(
+            request,
+            "Spotify library download",
+            "Selection",
+            "Selected tracks" if track_refs else ("All playlists" if selected == ["all"] else f"{len(selected)} playlist(s)"),
+            submitted_count=max(submitted_count, 1),
+        ),
     )
+    set_music_active_form(_ui_session_id(request), "spotify-library")
+    remember_music_task(_ui_session_id(request), "library_task", task.id)
     return _render_task_card(request, task.id, title="Music Task", container_id="music-library-task-panel")
 
 
@@ -906,7 +1528,15 @@ async def music_candidate_download_submit(request: Request):
         "music.candidate_download",
         lambda task: music_api._candidate_download_job(task.id, urls, None),
         submitted_by=_request_client_id(request),
+        meta=_music_task_meta(
+            request,
+            "Candidate download",
+            "Selected candidates",
+            f"{len(urls)} YouTube candidate(s)",
+            submitted_count=len(urls),
+        ),
     )
+    remember_music_task(_ui_session_id(request), container_id, task.id)
     return _render_task_card(
         request,
         task.id,

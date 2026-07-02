@@ -70,10 +70,28 @@ def resolve_worker_count(name: str, auto_value: int) -> int:
 CPU_COUNT = _cpu_count()
 TOTAL_RAM_GB = _total_ram_gb()
 
+# Legacy global cap retained for backwards compatibility and for callers that
+# still read this value. The task scheduler now uses lane-specific limits below.
 MAX_CONCURRENT_JOBS = resolve_worker_count(
     "MAX_CONCURRENT_JOBS",
     _auto_jobs(CPU_COUNT, TOTAL_RAM_GB),
 )
+
+# Lane limits keep lightweight/interactive work from blocking the heavy ML lane.
+# Defaults are deliberately conservative for one-machine and HF/free-CPU style
+# deployments. Raise MUSIC_CONCURRENCY locally only after validating CPU/network.
+MEDIA_HEAVY_CONCURRENCY = resolve_worker_count("MEDIA_HEAVY_CONCURRENCY", 1)
+AUTH_CONCURRENCY = resolve_worker_count("AUTH_CONCURRENCY", 1)
+MUSIC_CONCURRENCY = resolve_worker_count("MUSIC_CONCURRENCY", 1)
+AGENT_CONCURRENCY = resolve_worker_count("AGENT_CONCURRENCY", 1)
+
+TASK_LANE_CONCURRENCY = {
+    "heavy_media": MEDIA_HEAVY_CONCURRENCY,
+    "auth": AUTH_CONCURRENCY,
+    "music": MUSIC_CONCURRENCY,
+    "agent": AGENT_CONCURRENCY,
+}
+
 MUSIC_DOWNLOAD_WORKERS = resolve_worker_count(
     "MUSIC_DOWNLOAD_WORKERS",
     _auto_music_download_workers(CPU_COUNT),

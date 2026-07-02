@@ -742,6 +742,16 @@ pre,
   margin-bottom: 6px;
 }
 
+.callout--compact {
+  margin-top: 14px;
+  padding: 12px 14px;
+}
+
+.callout--compact p {
+  margin: 0;
+  color: var(--muted);
+}
+
 .callout--danger {
   background: var(--danger-soft);
   border-color: rgba(255, 92, 122, 0.26);
@@ -1088,6 +1098,51 @@ pre,
   opacity: 0.84;
 }
 
+
+
+.instagram-auth-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.instagram-auth-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid rgba(56, 189, 248, 0.18);
+  border-radius: var(--radius-sm);
+  background: rgba(56, 189, 248, 0.045);
+}
+
+.instagram-auth-card .section-head {
+  margin-bottom: 0;
+}
+
+.instagram-browser-shell {
+  overflow: hidden;
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  border-radius: 14px;
+  background: #05070a;
+  min-height: 420px;
+}
+
+.instagram-browser-frame {
+  display: block;
+  width: 100%;
+  height: min(72vh, 760px);
+  min-height: 420px;
+  border: 0;
+  background: #05070a;
+}
+
+.instagram-auth-task {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 @media (max-width: 1024px) {
   .topbar {
     border-radius: 24px;
@@ -1177,4 +1232,172 @@ pre,
   .footer {
     flex-direction: column;
   }
+}
+
+.auth-window-body {
+  min-height: 100vh;
+  background: #070a0f;
+}
+
+.auth-window-shell {
+  width: min(1180px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 24px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.auth-window-header {
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, rgba(21, 26, 33, 0.96), rgba(17, 21, 26, 0.98));
+  box-shadow: var(--shadow);
+}
+
+.auth-window-header h1 {
+  margin: 0 0 10px;
+  font-size: clamp(1.8rem, 4vw, 2.8rem);
+}
+
+.auth-window-header p {
+  max-width: 780px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.instagram-browser-shell--popup {
+  min-height: 640px;
+}
+
+.instagram-browser-frame--popup {
+  height: calc(100vh - 260px);
+  min-height: 640px;
+}
+
+/* Clean embedded Instagram login console. */
+.auth-window-body--browser-only {
+  width: 100vw;
+  height: 100vh;
+  min-height: 100vh;
+  margin: 0;
+  overflow: hidden;
+  background: #000;
+}
+
+.auth-window-shell--browser-only {
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  display: block;
+  background: #000;
+}
+
+.instagram-browser-shell--fullscreen {
+  width: 100vw;
+  height: 100vh;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  overflow: hidden;
+  background: #000;
+  box-shadow: none;
+}
+
+.instagram-browser-frame--fullscreen {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: #000;
+}
+
+.auth-window-body--browser-only #instagram-auth-window-status {
+  display: none;
+}
+
+.auth-window-local-card {
+  width: min(720px, calc(100vw - 32px));
+  margin: 32px auto;
+}
+
+/* 1920x1080 clean noVNC auth console: keep the embedded remote browser edge-to-edge. */
+.auth-window-body--browser-only,
+.auth-window-shell--browser-only,
+.instagram-browser-shell--fullscreen,
+.instagram-browser-frame--fullscreen {
+  position: fixed;
+  inset: 0;
+  width: 100dvw;
+  height: 100dvh;
+  min-width: 100dvw;
+  min-height: 100dvh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: #000;
+}
+
+.instagram-browser-frame--fullscreen {
+  display: block;
+  border: 0;
+  outline: 0;
+}
+
+.lane-status-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.lane-status-row {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.8fr) minmax(120px, 1fr) minmax(160px, 1.4fr);
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+@media (max-width: 760px) {
+  .lane-status-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.music-download-tray {
+  margin-top: 1.5rem;
+}
+
+.music-download-tray .section-head {
+  align-items: flex-start;
+}
+
+.music-download-list {
+  margin-top: 1rem;
+}
+
+.progress-step.is-warning {
+  color: var(--warning);
+}
+
+.progress-step.is-warning::before {
+  border-color: rgba(246, 196, 83, 0.78);
+  background: var(--warning);
+  box-shadow: 0 0 0 5px rgba(246, 196, 83, 0.14);
+}
+
+.progress-bar.is-warning {
+  background: linear-gradient(90deg, rgba(52, 211, 153, 0.9), rgba(246, 196, 83, 0.7));
 }

@@ -25,6 +25,12 @@ def _accepted_response(task) -> JSONResponse:
             "task_id": task.id,
             "status": task.status,
             "queue_position": task.queue_position,
+            "lane": task.meta.get("lane"),
+            "lane_label": task.meta.get("lane_label"),
+            "queue_message": task.meta.get("queue_message"),
+            "estimated_wait_seconds": task.meta.get("estimated_wait_seconds"),
+            "estimated_runtime_seconds": task.meta.get("estimated_runtime_seconds"),
+            "estimated_total_seconds": task.meta.get("estimated_total_seconds"),
             "poll_url": f"/api/tasks/{task.id}",
         },
     )
