@@ -71,13 +71,21 @@ The goal was simple: create a personal library that I can access anywhere, anyti
 
 ---
 
-### Authentication Workflows
+### Authentication 
 
-Sift supports two browser-based authentication flows:
+
+We make sure that we never store user credentials, passwords, or personal account information. Authentication is used only to access the user's own saved content for that session and perform the requested extraction. Once the workflow is complete, no sensitive authentication data is retained.
+
+The objective is purely to help users build a searchable, reusable offline library from content they have already chosen to save—not to collect or retain any personal information.
+
+
+Sift supports two browser-based authentication :
+
+
 
 #### Instagram
 
-Instagram login is used when private or restricted Instagram content requires an authenticated session.
+Instagram login is used when private or restricted Instagram content scraping requires an authenticated session.
 
 The app supports:
 
