@@ -21,7 +21,6 @@ It started as a set of small experimental scripts and has now been structured in
 Sift provides three main workflow areas:
 
 ```text
-Home
 Media
 Music
 ````
@@ -43,9 +42,9 @@ The output can include:
 * parsed text/transcripts
 * cleaned media artifacts
 
-If a media task produces more than 10 user-facing files, Sift automatically bundles them into a ZIP file for easier download.
+The main purpose of this workflow is to capture and preserve useful social media content that you come across and want to keep.
 
----
+Instead of saving posts into a collection and forgetting about them, the workflow extracts the content through OCR and transcription, converts it into reusable text, and stores everything in one place. This makes the content easier to search, revisit, organize, and reuse later in any context.---
 
 ### Music Workflow
 
@@ -64,7 +63,11 @@ It supports:
 * maintaining a music session tray
 * bundling large task outputs into ZIP files
 
-If a single music task downloads more than 10 audio files, Sift creates a ZIP package for that task while still preserving individual tracks for the session tray.
+The main reason I built this workflow was that I already had a large music collection spread across Spotify, playlists, YouTube, and other places.
+
+I did not want to keep depending on big platforms or pay repeatedly just to access music I already cared about. What I wanted was my own offline music library, built from my existing collection without manually searching and downloading every track.
+
+The goal was simple: create a personal library that I can access anywhere, anytime.
 
 ---
 
