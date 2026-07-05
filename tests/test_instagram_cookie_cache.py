@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from media_node.insta.web_fetcher import WebCollectionFetcher
+from sift.engines.media.instagram.web_fetcher import WebCollectionFetcher
 
 
 class InstagramCookieCacheTests(unittest.TestCase):

@@ -1,0 +1,9 @@
+<div class="status-grid status-grid--compact">
+  {% for card in status_cards %}
+  <article class="status-card">
+    <span class="status-card__label">{{ card.label }}</span>
+    <span class="status-pill status-pill--{{ card.variant }}">{{ card.value }}</span>
+  </article>
+  {% endfor %}
+</div>
+<p class="panel__meta status-summary-note">Shows whether background music or media jobs are currently queued or running.</p>

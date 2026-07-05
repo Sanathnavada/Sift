@@ -1,635 +1,568 @@
-# Project Overview
+````markdown
+# Sift
 
-This repository is a multi-service local automation and media-processing system built around a single FastAPI gateway.
+Sift is a local-first FastAPI application for downloading, processing, reviewing, and packaging media/music outputs through a clean server-rendered UI.
 
-At a high level:
+It started as a set of small experimental scripts and has now been structured into a maintainable Python project with:
 
-- `app_node` is the API gateway and orchestration layer.
-- `music_node` handles Spotify to YouTube resolution and audio downloads.
-- `media_node` handles Instagram and YouTube media scraping/transcription/cleaning.
-- `i_node` runs the Telegram agent.
+- a FastAPI backend
+- a server-rendered HTMX/Jinja UI
+- media extraction workflows
+- music download workflows
+- Instagram login/session handling
+- Spotify authorization flow
+- task tracking and artifact delivery
+- automatic ZIP bundling for large outputs
 
-The gateway exposes all of these through one API surface, adds task polling, queueing, ephemeral artifact downloads, and a UI-friendly Spotify auth flow.
+---
 
+## What Sift Does
 
-# Repository Structure
+Sift provides three main workflow areas:
 
-Main folders:
+```text
+Home
+Media
+Music
+````
 
-- `app_node/`
-  The unified API gateway.
-- `music_node/`
-  Music processing pipeline.
-- `media_node/`
-  Media scraping and transcription pipeline.
-- `i_node/`
-  Telegram agent runtime.
-- `data/`
-  Runtime-generated outputs, artifacts, and sessions.
-- `venv/`
-  Local Python virtual environment.
+### Media Workflow
 
-Important root files:
+The Media workflow helps extract and process content from sources such as:
 
-- [README.md](/abs/path/C:/Users/Dell/Desktop/code/README.md:1)
-  This document.
-- [IMPLEMENTATION_PLAN.md](/abs/path/C:/Users/Dell/Desktop/code/IMPLEMENTATION_PLAN.md:1)
-  The design and rollout plan that shaped the current implementation.
-- [CLAUDE.md](/abs/path/C:/Users/Dell/Desktop/code/CLAUDE.md:1)
-  Local engineering guidance for work in this repo.
-- [req.txt](/abs/path/C:/Users/Dell/Desktop/code/req.txt:1)
-  Dependency reference.
+* Instagram posts
+* Instagram public profiles
+* Instagram private collections
+* bulk Instagram URLs
+* YouTube videos/transcripts
 
+The output can include:
 
-# System Architecture
-
-## 1. `app_node` as the gateway
-
-`app_node` is the entrypoint for API consumers. It is responsible for:
-
-- exposing all routes under one FastAPI app
-- starting and stopping the in-process task system
-- optionally starting Navidrome on app startup
-- rate limiting job submissions
-- serializing heavy work through a single-worker queue
-- exposing task polling and artifact download endpoints
-- normalizing how API clients interact with long-running work
-
-Main file:
-
-- [app_node/main.py](/abs/path/C:/Users/Dell/Desktop/code/app_node/main.py:1)
-
-This file wires:
-
-- the gateway app
-- CORS
-- job submission rate limiting
-- router registration
-- task polling endpoints
-- artifact download endpoints
-- Navidrome lifecycle
-
-
-## 2. `music_node` as the music engine
-
-`music_node` contains the core music logic:
-
-- Spotify public link ingestion
-- Spotify user library ingestion
-- YouTube search/resolution
-- actual yt-dlp downloads
-- download history tracking
-
-Important files:
-
-- [music_node/main.py](/abs/path/C:/Users/Dell/Desktop/code/music_node/main.py:1)
-  Original CLI entrypoint and source-of-truth behavior reference.
-- [music_node/services/spotify.py](/abs/path/C:/Users/Dell/Desktop/code/music_node/services/spotify.py:1)
-  Spotify auth and library access.
-- [music_node/services/youtube.py](/abs/path/C:/Users/Dell/Desktop/code/music_node/services/youtube.py:1)
-  YouTube resolution layer.
-- [music_node/services/downloader.py](/abs/path/C:/Users/Dell/Desktop/code/music_node/services/downloader.py:1)
-  Download engine.
-
-
-## 3. `media_node` as the media engine
-
-`media_node` contains the core media logic:
-
-- Instagram public user scraping
-- Instagram post scraping
-- Instagram saved collection scraping via Playwright
-- YouTube audio transcription
-- OCR and Whisper passes
-- LLM cleaning of raw output
-
-Important files:
-
-- [media_node/main.py](/abs/path/C:/Users/Dell/Desktop/code/media_node/main.py:1)
-  Original CLI entrypoint and behavior reference.
-- [media_node/services.py](/abs/path/C:/Users/Dell/Desktop/code/media_node/services.py:1)
-  Processing and orchestration service layer.
-- [media_node/insta/web_fetcher.py](/abs/path/C:/Users/Dell/Desktop/code/media_node/insta/web_fetcher.py:1)
-  Playwright-backed private collection fetcher.
-- [media_node/insta/ytdlp_fetcher.py](/abs/path/C:/Users/Dell/Desktop/code/media_node/insta/ytdlp_fetcher.py:1)
-  Public Instagram fetcher.
-
-
-## 4. `i_node` as the Telegram runtime
-
-`i_node` contains the Telegram agent runtime.
-
-Important file:
-
-- [i_node/telegram_agent.py](/abs/path/C:/Users/Dell/Desktop/code/i_node/telegram_agent.py:1)
-
-The gateway does not reimplement the Telegram logic. It wraps it with API-friendly task controls.
-
-
-# Request Lifecycle
-
-For heavy routes, the request flow is now:
-
-1. Client sends a request to `app_node`.
-2. The route validates payload shape.
-3. The route normalizes inputs.
-4. The route submits a job into the central queue.
-5. The API returns `202 Accepted` with:
-   - `task_id`
-   - `status`
-   - `queue_position`
-   - `poll_url`
-6. The single-worker task system runs the job when it reaches the front of the queue.
-7. The client polls `GET /api/tasks/{task_id}`.
-8. If the job produced ephemeral files, the client downloads them through artifact endpoints.
-
-
-# Queueing And Task Model
-
-The task and queue system lives in:
-
-- [app_node/tasks.py](/abs/path/C:/Users/Dell/Desktop/code/app_node/tasks.py:1)
-
-What it does:
-
-- stores tasks in memory
-- assigns task ids
-- runs heavy jobs through one FIFO worker
-- supports queued and running states
-- stores final results
-- supports cancellation for queued and running tasks
-
-Task statuses:
-
-- `queued`
-- `running`
-- `completed`
-- `failed`
-- `cancelled`
-
-Current execution model:
-
-- one heavy job at a time
-- in-process memory-backed queue
-- no external queue system like Redis/Celery
-
-This was chosen deliberately because the app is currently designed for one machine with constrained hardware.
-
-
-# Rate Limiting
-
-Rate limiting is applied in:
-
-- [app_node/main.py](/abs/path/C:/Users/Dell/Desktop/code/app_node/main.py:1)
-
-Current behavior:
-
-- limits job-submission traffic per client IP
-- protects `/api/media/*`, `/api/music/*`, and `/api/telegram/start`
-- leaves polling and docs routes exempt
-
-The purpose is protective only.
-
-Important distinction:
-
-- rate limiting controls how often clients may submit jobs
-- queueing controls when heavy jobs are actually allowed to execute
-
-
-# Artifacts And Ephemeral Output
-
-Artifact handling lives in:
-
-- [app_node/artifacts.py](/abs/path/C:/Users/Dell/Desktop/code/app_node/artifacts.py:1)
-
-This is how the system handles temporary outputs when `outdir` is omitted.
-
-Behavior:
-
-- if `outdir` is provided:
-  persistent mode
-- if `outdir` is omitted:
-  ephemeral mode
-
-In ephemeral mode:
-
-- a job-scoped directory is created under the artifact root
-- files are generated there
-- the task result includes artifact metadata
-- files can be downloaded through API endpoints
-- artifacts are cleaned up after a TTL
-
-Task artifact endpoints:
-
-- `GET /api/tasks/{task_id}/artifacts`
-- `GET /api/tasks/{task_id}/artifacts/{artifact_id}`
-
-Artifact metadata generally includes:
-
-- artifact id
-- filename
-- content type
-- size
-- download URL
-
-
-# Input Normalization
-
-Shared input normalization lives in:
-
-- [app_node/input_resolver.py](/abs/path/C:/Users/Dell/Desktop/code/app_node/input_resolver.py:1)
-
-This module gives the API one consistent way to support:
-
-- direct payload input
-- local `input_file` payload references
-
-Supported patterns:
-
-- single direct input
-- multiple inline inputs
-- `.txt` input file
-- `.json` input file
-
-Current file rules:
-
-- `.txt`
-  one item per line, blank lines ignored, `#` comments ignored
-- `.json`
-  list of strings
-
-
-# Spotify Auth Flow
-
-Spotify auth session management lives in:
-
-- [app_node/auth_sessions.py](/abs/path/C:/Users/Dell/Desktop/code/app_node/auth_sessions.py:1)
-
-This was introduced because the original CLI Spotify flow was terminal-oriented and not suitable for Postman or a future web UI.
-
-The current API-friendly flow is:
-
-1. `POST /api/music/user/auth/start`
-   Returns:
-   - `auth_session_id`
-   - `authorization_url`
-   - `redirect_uri`
-   - `poll_url`
-
-2. Open `authorization_url` in a browser.
-
-3. Complete auth through either:
-   - `GET /api/music/user/auth/callback?...`
-   - or `POST /api/music/user/auth/complete`
-
-4. Poll auth status:
-   - `GET /api/music/user/auth/session/{auth_session_id}`
-
-5. Once authorized:
-   - fetch playlists
-   - download selected playlists
-
-This keeps Spotify user auth explicit and UI-friendly.
-
-
-# Router Design
-
-## Music routes
-
-Music API routes live in:
-
-- [app_node/routers/music.py](/abs/path/C:/Users/Dell/Desktop/code/app_node/routers/music.py:1)
-
-What this router does:
-
-- validates music request payloads
-- normalizes direct and file-backed inputs
-- supports singular and batch forms
-- uses `music_node` services directly
-- chooses persistent vs ephemeral output handling
-- wraps final outputs as task results + artifacts
-- handles Spotify auth session routes
-
-Main route groups:
-
-- `/api/music/song`
-- `/api/music/yt`
-- `/api/music/link`
-- `/api/music/user/auth/*`
-- `/api/music/user/playlists`
-- `/api/music/user/download`
-
-
-## Media routes
-
-Media API routes live in:
-
-- [app_node/routers/media.py](/abs/path/C:/Users/Dell/Desktop/code/app_node/routers/media.py:1)
-
-What this router does:
-
-- normalizes YouTube and bulk URL input
-- wraps public and private Instagram scraping
-- supports persistent and ephemeral outputs
-- registers produced files as artifacts
-- uses a shared stable session directory for private Instagram login reuse
-
-Main route groups:
-
-- `/api/media/youtube`
-- `/api/media/public-user`
-- `/api/media/post`
-- `/api/media/ig-bulk`
-- `/api/media/private-user`
-- `/api/media/clean-bulk`
-
-
-## Telegram routes
-
-Telegram routes live in:
-
-- [app_node/routers/telegram.py](/abs/path/C:/Users/Dell/Desktop/code/app_node/routers/telegram.py:1)
-
-What this router does:
-
-- starts the Telegram agent as a tracked async task
-- exposes stop/status controls
-- surfaces task metadata in the same gateway model
-
-
-# API Conventions
-
-## Async submission response
-
-Heavy routes return:
-
-```json
-{
-  "task_id": "uuid",
-  "status": "queued",
-  "queue_position": 1,
-  "poll_url": "/api/tasks/uuid"
-}
+* images
+* videos/reels
+* parsed text/transcripts
+* cleaned media artifacts
+
+If a media task produces more than 10 user-facing files, Sift automatically bundles them into a ZIP file for easier download.
+
+---
+
+### Music Workflow
+
+The Music workflow helps download and organize music from:
+
+* direct song names
+* YouTube links
+* Spotify links
+* Spotify playlists/library flows
+
+It supports:
+
+* matching songs to likely YouTube results
+* reviewing uncertain matches
+* downloading accepted tracks
+* maintaining a music session tray
+* bundling large task outputs into ZIP files
+
+If a single music task downloads more than 10 audio files, Sift creates a ZIP package for that task while still preserving individual tracks for the session tray.
+
+---
+
+### Authentication Workflows
+
+Sift supports two browser-based authentication flows:
+
+#### Instagram
+
+Instagram login is used when private or restricted Instagram content requires an authenticated session.
+
+The app supports:
+
+* opening a login window
+* checking login state
+* reusing an authenticated session
+* resetting the session when needed
+* safe user-facing error messages instead of raw browser automation errors
+
+#### Spotify
+
+Spotify authorization is used to access the logged-in user's playlists and library.
+
+The Spotify app credentials identify the application. The Spotify account that logs in through the approval window is the actual user whose library is accessed.
+
+The flow supports:
+
+* opening a Spotify OAuth approval window
+* detecting authorization status
+* showing the connected Spotify user
+* retrying failed/closed auth attempts
+* rejecting placeholder credentials like `replace-me`
+
+---
+
+## Project Structure
+
+```text
+sift/
+├── src/
+│   └── sift/
+│       ├── app/
+│       │   ├── main.py
+│       │   ├── lifespan.py
+│       │   ├── middleware.py
+│       │   ├── settings.py
+│       │   │
+│       │   ├── api/
+│       │   │   ├── system.py
+│       │   │   ├── tasks.py
+│       │   │   └── routes/
+│       │   │       ├── media.py
+│       │   │       ├── music.py
+│       │   │       └── telegram.py
+│       │   │
+│       │   ├── web/
+│       │   │   ├── routes.py
+│       │   │   ├── view_models.py
+│       │   │   ├── form_parsers.py
+│       │   │   ├── templates/
+│       │   │   └── static/
+│       │   │
+│       │   └── runtime/
+│       │       ├── artifacts.py
+│       │       ├── auth_sessions.py
+│       │       ├── input_resolver.py
+│       │       ├── instagram_sessions.py
+│       │       ├── music_download_tray.py
+│       │       ├── runtime_capacity.py
+│       │       └── tasks.py
+│       │
+│       ├── engines/
+│       │   ├── media/
+│       │   ├── music/
+│       │   └── telegram/
+│       │
+│       └── integrations/
+│           ├── navidrome/
+│           └── novnc/
+│
+├── tests/
+├── var/
+├── downloads/
+├── Dockerfile
+├── docker-compose.yml
+├── docker-entrypoint.sh
+├── requirements.txt
+├── pyproject.toml
+├── README.md
+└── DOCKER.md
 ```
 
-## Polling response
+---
 
-`GET /api/tasks/{task_id}` returns:
+## Important Folders
 
-- `202` while the task is still in progress
-- `200` when it has finished
+### `src/sift/app`
 
-Common fields:
+The FastAPI application layer.
 
-- `id`
-- `service`
-- `status`
-- `submitted_at`
-- `started_at`
-- `finished_at`
-- `queue_position`
-- `error`
-- `result`
-- `artifacts`
+This includes:
 
+* app startup/shutdown
+* middleware
+* API routes
+* UI routes
+* task management
+* authentication sessions
+* artifact registration and delivery
 
-# Persistent Vs Ephemeral Outputs
+---
 
-This is one of the key design rules in the current system.
+### `src/sift/app/web`
 
-If the endpoint supports file output:
+The server-rendered UI.
 
-- passing `outdir` means:
-  save files persistently there
-- omitting `outdir` means:
-  generate files in a temporary job directory and expose them as API artifacts
+This contains:
 
-This behavior is already wired into:
+```text
+templates/
+static/
+routes.py
+view_models.py
+form_parsers.py
+```
 
-- music `song`
-- music `yt`
-- music `link`
-- music `user/download`
-- media `youtube`
-- media `public-user`
-- media `post`
-- media `ig-bulk`
-- media `private-user`
+Sift does not use a separate React/Vue frontend. The UI is served directly by FastAPI using Jinja templates and HTMX-style interactions.
 
-`media/clean-bulk` is file-transform oriented and returns a persistent cleaned file path.
+---
 
+### `src/sift/engines`
 
-# Batch Support
+The actual processing engines.
 
-The API now supports batch-oriented input for routes that previously behaved more singularly.
+```text
+engines/media     → Instagram/YouTube/media extraction logic
+engines/music     → Spotify/YouTube/music download logic
+engines/telegram  → Telegram-related processing
+```
 
-Music batch-capable routes:
+---
 
-- `song`
-  - `query`
-  - `queries`
-  - `input_file`
-- `yt`
-  - `input`
-  - `inputs`
-  - `input_file`
-- `link`
-  - `url`
-  - `urls`
-  - `input_file`
+### `var`
 
-Media batch-capable routes:
+Runtime state used by the backend.
 
-- `youtube`
-  - `input`
-  - `inputs`
-  - `input_file`
-- `ig-bulk`
-  - `urls`
-  - `input_file`
+Examples:
 
-Each API request becomes one queued job, even if it contains multiple internal items.
+```text
+var/artifacts
+var/sessions
+var/music_config
+```
 
+This is where Sift stores internal runtime files such as task artifacts, session state, caches, and music config/runtime data.
 
-# Navidrome Integration
+---
 
-Navidrome startup is handled in:
+### `downloads`
 
-- [app_node/main.py](/abs/path/C:/Users/Dell/Desktop/code/app_node/main.py:1)
+User-facing output files.
 
-Behavior:
+Examples:
 
-- on app startup, if `Navidrome.exe` exists, the gateway launches it
-- on app shutdown, the gateway stops it
+```text
+downloads/music
+downloads/media
+```
 
-Configured paths come from:
+This is where final downloaded or processed files can be stored when persistent output is needed.
 
-- [app_node/settings.py](/abs/path/C:/Users/Dell/Desktop/code/app_node/settings.py:1)
+---
 
+## Local Setup
 
-# Important Configuration
+### 1. Create a virtual environment
 
-Gateway settings:
+```bash
+python -m venv venv
+```
 
-- [app_node/settings.py](/abs/path/C:/Users/Dell/Desktop/code/app_node/settings.py:1)
+Activate it:
 
-Music configuration:
-
-- [music_node/config/config.py](/abs/path/C:/Users/Dell/Desktop/code/music_node/config/config.py:1)
-
-Environment file:
-
-- [.env](/abs/path/C:/Users/Dell/Desktop/code/.env:1)
-
-Important values include:
-
-- Spotify credentials
-- Spotify redirect URI
-- Ollama / LLM config
-- any service-specific secrets
-
-
-# How To Run
-
-From the repo root:
+#### Windows PowerShell
 
 ```powershell
-.\venv\Scripts\python.exe -m uvicorn app_node.main:app --host 0.0.0.0 --port 8000 --reload
+.\venv\Scripts\Activate.ps1
 ```
 
-Primary base URL:
+#### macOS/Linux
+
+```bash
+source venv/bin/activate
+```
+
+---
+
+### 2. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+### 3. Install Playwright browsers
+
+Instagram login and scraping flows may require Playwright.
+
+```bash
+python -m playwright install chromium
+```
+
+---
+
+### 4. Configure environment variables
+
+Create or update `.env.docker` in the project root.
+
+Minimum useful configuration:
+
+```env
+APP_ENV=local
+APP_HOST=0.0.0.0
+APP_PORT=8000
+
+NOVNC_ENABLED=false
+
+SPOTIPY_CLIENT_ID=replace-me
+SPOTIPY_CLIENT_SECRET=replace-me
+SPOTIPY_REDIRECT_URI=http://127.0.0.1:8000/callback
+
+MUSIC_OUTPUT_DIR=downloads/music
+MEDIA_OUTPUT_DIR=downloads/media
+```
+
+For Spotify features, replace the placeholder values with real Spotify Developer App credentials.
+
+---
+
+## Running Locally
+
+From the project root:
+
+```bash
+python -m uvicorn sift.app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+If running from inside the `src` folder:
+
+```bash
+python -m uvicorn sift.app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+Open:
 
 ```text
 http://127.0.0.1:8000
 ```
 
-Health check:
+---
 
-```text
-GET /health
+## Docker Usage
+
+Build and run:
+
+```bash
+docker compose up --build
 ```
 
+Open:
 
-# How To Test
+```text
+http://127.0.0.1:8000
+```
 
-The Postman-oriented reference is here:
+For Docker-specific details, see:
 
-- [app_node/endpoints.txt](/abs/path/C:/Users/Dell/Desktop/code/app_node/endpoints.txt:1)
+```text
+DOCKER.md
+```
 
-Recommended testing order:
+---
 
-1. Hit `/health`
-2. Submit one music or media job
-3. Poll `/api/tasks/{task_id}`
-4. If ephemeral mode was used, list artifacts
-5. Download one artifact
-6. Test one `input_file` flow
-7. Test Spotify auth start/status flow
+## Spotify Setup
 
+To use Spotify library/playlist flows:
 
-# Data Flow Examples
+1. Go to the Spotify Developer Dashboard.
+2. Create an app.
+3. Copy the Client ID and Client Secret.
+4. Add the redirect URI:
 
-## Example 1: Ephemeral music download
+```text
+http://127.0.0.1:8000/callback
+```
 
-1. Client calls `POST /api/music/yt` without `outdir`
-2. Router normalizes input
-3. Router submits one queued job
-4. Task runner executes YouTube resolve/download
-5. Files are saved into a temp artifact directory
-6. Artifacts are registered
-7. Client polls task result
-8. Client downloads artifact through `/api/tasks/{task_id}/artifacts/{artifact_id}`
+5. Set the values in `.env.docker`:
 
-## Example 2: Private Instagram collection scrape
+```env
+SPOTIPY_CLIENT_ID=your-client-id
+SPOTIPY_CLIENT_SECRET=your-client-secret
+SPOTIPY_REDIRECT_URI=http://127.0.0.1:8000/callback
+```
 
-1. Client calls `POST /api/media/private-user`
-2. Router submits one queued job
-3. Job creates output directory
-4. `WebCollectionFetcher` reuses or creates a logged-in web session
-5. Collection items are fetched
-6. `ScraperService.process_posts(...)` processes them
-7. Outputs are saved and artifacts registered if ephemeral
-8. Client polls final task result
+The developer credentials identify the Sift application.
 
-## Example 3: Spotify user playlists
+The Spotify account that logs in through the approval window is the user whose playlists/library are accessed.
 
-1. Client starts auth session
-2. User authorizes through Spotify browser flow
-3. Auth session is marked complete
-4. Client requests playlist fetch
-5. Playlist fetch runs as a queued task
-6. Client polls final playlist result
-7. Client chooses playlists and submits download job
+If your Spotify app is still in development mode, make sure the Spotify account you use for testing is allowed in the Spotify app dashboard.
 
+---
 
-# Current Limitations And Design Choices
+## Instagram Setup
 
-- The queue is in-memory only.
-  If the server restarts, queued/running task state is lost.
-- Heavy execution is intentionally serialized to one worker.
-- Telegram currently shares the same general task framework, but because it is long-lived it can occupy the single-worker slot.
-- External dependencies still determine actual runtime behavior:
-  - Spotify
-  - Instagram
-  - yt-dlp
-  - Playwright
-  - Ollama / LLM endpoint
-  - GPU model execution
+Instagram flows may require a browser session.
 
-These are deliberate tradeoffs for simplicity on a single-machine system.
+For local development:
 
+```env
+NOVNC_ENABLED=false
+```
 
-# Where To Look When Debugging
+This uses a normal local browser automation flow.
 
-If a route returns the wrong API shape:
+For Docker/noVNC deployments:
 
-- [app_node/main.py](/abs/path/C:/Users/Dell/Desktop/code/app_node/main.py:1)
-- [app_node/routers/music.py](/abs/path/C:/Users/Dell/Desktop/code/app_node/routers/music.py:1)
-- [app_node/routers/media.py](/abs/path/C:/Users/Dell/Desktop/code/app_node/routers/media.py:1)
+```env
+NOVNC_ENABLED=true
+NOVNC_AUTO_HOST=true
+```
 
-If queueing or task state looks wrong:
+The app can open a browser-based login window and reuse the connected Instagram session for private or restricted media workflows.
 
-- [app_node/tasks.py](/abs/path/C:/Users/Dell/Desktop/code/app_node/tasks.py:1)
+---
 
-If ephemeral downloads or missing files are the issue:
+## Output and Artifact Behavior
 
-- [app_node/artifacts.py](/abs/path/C:/Users/Dell/Desktop/code/app_node/artifacts.py:1)
+Sift tracks task outputs as artifacts.
 
-If `input_file` payloads fail:
+For small outputs, files are shown individually.
 
-- [app_node/input_resolver.py](/abs/path/C:/Users/Dell/Desktop/code/app_node/input_resolver.py:1)
+For larger outputs, ZIP bundling is applied.
 
-If Spotify user auth fails:
+### Media ZIP behavior
 
-- [app_node/auth_sessions.py](/abs/path/C:/Users/Dell/Desktop/code/app_node/auth_sessions.py:1)
-- [music_node/services/spotify.py](/abs/path/C:/Users/Dell/Desktop/code/music_node/services/spotify.py:1)
+```text
+<= 10 files  → individual files
+> 10 files   → one ZIP artifact
+```
 
-If media processing itself fails:
+Media ZIPs include user-facing files such as:
 
-- [media_node/services.py](/abs/path/C:/Users/Dell/Desktop/code/media_node/services.py:1)
+```text
+.jpg
+.jpeg
+.png
+.webp
+.mp4
+.mov
+.m4v
+.txt
+```
 
-If music downloads/resolution fail:
+Internal/debug/cache files are excluded.
 
-- [music_node/services/downloader.py](/abs/path/C:/Users/Dell/Desktop/code/music_node/services/downloader.py:1)
-- [music_node/services/youtube.py](/abs/path/C:/Users/Dell/Desktop/code/music_node/services/youtube.py:1)
+---
 
+### Music ZIP behavior
 
-# Companion Docs
+```text
+<= 10 audio files  → individual audio files
+> 10 audio files   → ZIP artifact + individual audio files
+```
 
-Useful companion documents:
+Music ZIPs include audio files such as:
 
-- [IMPLEMENTATION_PLAN.md](/abs/path/C:/Users/Dell/Desktop/code/IMPLEMENTATION_PLAN.md:1)
-- [app_node/endpoints.txt](/abs/path/C:/Users/Dell/Desktop/code/app_node/endpoints.txt:1)
-- [CLAUDE.md](/abs/path/C:/Users/Dell/Desktop/code/CLAUDE.md:1)
+```text
+.mp3
+.m4a
+.webm
+.opus
+.wav
+.flac
+.ogg
+.aac
+```
 
+Individual audio artifacts are preserved so the music session tray continues to work.
 
-# Summary
+Sift does not automatically ZIP the entire music session tray. ZIP files are created for the current music download task only.
 
-This project is now wired as a single API-first gateway around several specialized local processing nodes.
+---
 
-The important idea is:
+## Task Runtime
 
-- node folders still own the domain logic
-- `app_node` owns orchestration, API contract, queueing, auth UX, and artifact delivery
+Most long-running operations are handled as background tasks.
 
-That separation is what makes the system usable today from Postman and extensible later for a real UI.
+The UI shows:
+
+* queued state
+* running state
+* finished state
+* failed state
+* runtime estimates
+* logs/activity
+* downloadable artifacts
+
+Task-related APIs live under:
+
+```text
+/api/tasks
+```
+
+---
+
+## API Docs
+
+When the app is running, open:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+This shows the FastAPI-generated API documentation.
+
+---
+
+## Testing
+
+Run the full test suite:
+
+```bash
+PYTHONPATH=src python -m pytest -q
+```
+
+On Windows PowerShell:
+
+```powershell
+$env:PYTHONPATH="src"
+python -m pytest -q
+```
+
+Compile check:
+
+```bash
+PYTHONPATH=src python -m compileall -q src tests
+```
+
+On Windows PowerShell:
+
+```powershell
+$env:PYTHONPATH="src"
+python -m compileall -q src tests
+```
+
+---
+
+## Development Notes
+
+The project intentionally follows a practical middle-ground structure.
+
+It is not split into microservices and does not use unnecessary enterprise layering.
+
+The main boundaries are:
+
+```text
+app          → FastAPI, UI, runtime, task orchestration
+engines      → actual media/music/telegram processing logic
+integrations → noVNC, Navidrome, external runtime helpers
+```
+
+This keeps the codebase simple, understandable, and maintainable without over-engineering.
+
+---
+
+## Current Status
+
+Implemented and validated:
+
+* FastAPI app shell
+* server-rendered UI
+* media workflows
+* music workflows
+* Spotify OAuth handling
+* Instagram login/session handling
+* task runtime
+* artifact delivery
+* ZIP bundling for large outputs
+* Docker setup
+* structured `src/sift` package layout
+* regression/unit tests for core behavior
+
+---
+
+## License
+
+This project is currently private/internal unless a license is explicitly added.
+
+```
+```

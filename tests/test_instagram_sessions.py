@@ -4,7 +4,7 @@ import time
 import unittest
 from pathlib import Path
 
-from app_node.instagram_sessions import InstagramSessionStore
+from sift.app.runtime.instagram_sessions import InstagramSessionStore
 
 
 class InstagramSessionStoreTests(unittest.TestCase):

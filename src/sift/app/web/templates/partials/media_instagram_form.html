@@ -1,0 +1,54 @@
+<div class="section-head section-head--compact">
+  <h3>Instagram media extraction</h3>
+  <p>Process direct post/reel URLs, public profiles, or saved collections. The pipeline detects whether each item is an image, video, or carousel and routes it to OCR, transcription, or both.</p>
+</div>
+
+<div
+  id="instagram-auth-panel"
+  class="instagram-auth-panel-host"
+  hx-get="/ui/media/instagram/auth/panel"
+  hx-trigger="load"
+  hx-swap="innerHTML">
+</div>
+
+<form class="stack-form" hx-post="/ui/media/instagram/submit" hx-target="#media-instagram-posts-task-panel" hx-swap="innerHTML" hx-disabled-elt="find button" hx-indicator="find .submit-indicator" data-instagram-mode-form>
+  <div class="field-group" data-mode-group="instagram-source">
+    <span class="label">Source</span>
+    <div class="choice-row">
+      <label class="choice"><input type="radio" name="instagram_mode" value="posts" {% if instagram_active_mode|default("posts") == "posts" %}checked{% endif %}> Posts</label>
+      <label class="choice"><input type="radio" name="instagram_mode" value="public_profile" {% if instagram_active_mode|default("posts") == "public_profile" %}checked{% endif %}> Public Profile</label>
+      <label class="choice"><input type="radio" name="instagram_mode" value="private_collection" {% if instagram_active_mode|default("posts") == "private_collection" %}checked{% endif %}> Private Collection</label>
+    </div>
+  </div>
+
+  <div class="mode-panel {% if instagram_active_mode|default("posts") != "posts" %}is-hidden{% endif %}" data-mode-panel="instagram-source" data-mode-value="posts">
+    <p class="panel__meta">Paste one post, reel, or carousel URL per line. Public content may work without login, but a connected session improves reliability for restricted metadata and carousel children.</p>
+    <div class="field">
+      <label class="label" for="media-instagram-urls">Post, reel, or carousel URLs</label>
+      <textarea class="textarea" id="media-instagram-urls" name="urls_text" rows="6" placeholder="One Instagram post, reel, or carousel URL per line" data-required-when-active="true"></textarea>
+    </div>
+  </div>
+
+  <div class="mode-panel {% if instagram_active_mode|default("posts") != "public_profile" %}is-hidden{% endif %}" data-mode-panel="instagram-source" data-mode-value="public_profile">
+    <p class="panel__meta">Enter a username and post count. Sift fetches recent media, expands carousels, runs OCR on images, and transcribes videos when present.</p>
+    <div class="field">
+      <label class="label" for="media-instagram-username">Instagram username</label>
+      <input class="input" type="text" id="media-instagram-username" name="username" placeholder="krishnakarthikeyan" data-required-when-active="true">
+    </div>
+    <div class="field">
+      <label class="label" for="media-instagram-firstn">First N posts</label>
+      <input class="input" type="number" min="1" value="3" id="media-instagram-firstn" name="first_n" data-required-when-active="true">
+    </div>
+  </div>
+
+  <div class="mode-panel {% if instagram_active_mode|default("posts") != "private_collection" %}is-hidden{% endif %}" data-mode-panel="instagram-source" data-mode-value="private_collection">
+    <p class="panel__meta">Use this for saved Instagram collections. Since saved collections are private, this mode requires a connected session.</p>
+    <div class="field">
+      <label class="label" for="media-instagram-collection">Collection name</label>
+      <input class="input" type="text" id="media-instagram-collection" name="collection" placeholder="Mind" data-required-when-active="true">
+    </div>
+  </div>
+
+  <button class="button button--wide" type="submit">Start Media Job</button>
+  <span class="submit-indicator" aria-live="polite">Submitting...</span>
+</form>

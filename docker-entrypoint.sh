@@ -37,8 +37,8 @@ rm -f "/tmp/.X${_display_number}-lock" "/tmp/.X11-unix/X${_display_number}"
 rm -rf "$NOVNC_WEB_DIR"
 mkdir -p "$NOVNC_WEB_DIR"
 cp -a /usr/share/novnc/. "$NOVNC_WEB_DIR/"
-if [ -f /app/novnc/vnc_clean.html ]; then
-  cp /app/novnc/vnc_clean.html "$NOVNC_WEB_DIR/vnc_clean.html"
+if [ -f /app/src/sift/integrations/novnc/vnc_clean.html ]; then
+  cp /app/src/sift/integrations/novnc/vnc_clean.html "$NOVNC_WEB_DIR/vnc_clean.html"
 fi
 
 cat > "$_home/.fluxbox/init" <<'FLUXBOX_INIT'
@@ -108,4 +108,4 @@ echo "  noVNC=http://localhost:${NOVNC_PORT}/vnc_clean.html?autoconnect=true&res
 echo "  VNC_RESOLUTION=$VNC_RESOLUTION"
 echo "  Browser target=${INSTAGRAM_BROWSER_WIDTH}x${INSTAGRAM_BROWSER_HEIGHT}"
 
-exec python -m uvicorn app_node.main:app --host 0.0.0.0 --port 8000
+exec "$@"

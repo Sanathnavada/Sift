@@ -8,6 +8,8 @@ services:
       - "8000:8000"
       - "6080:6080"
     environment:
+      SIFT_ROOT: /app
+      PYTHONPATH: /app/src
       DISPLAY: ":99"
       NOVNC_ENABLED: "true"
       NOVNC_CLEAN_UI: "true"
@@ -20,12 +22,20 @@ services:
       NOVNC_PORT: "6080"
       VNC_PORT: "5900"
       VNC_RESOLUTION: "1920x1080x24"
+      HF_HOME: /app/var/model_cache/huggingface
+      HF_HUB_CACHE: /app/var/model_cache/huggingface/hub
+      HF_HUB_ETAG_TIMEOUT: "10"
+      HF_HUB_DOWNLOAD_TIMEOUT: "30"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      TORCH_HOME: /app/var/model_cache/torch
+      XDG_CACHE_HOME: /app/var/model_cache
+      MUSIC_CONFIG_DIR: /app/var/music_config
     volumes:
-      - gateway-data:/app/data
+      - gateway-var:/app/var
       - gateway-downloads:/app/downloads
     shm_size: "2gb"
     restart: unless-stopped
 
 volumes:
-  gateway-data:
+  gateway-var:
   gateway-downloads:

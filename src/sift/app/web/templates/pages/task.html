@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }} | Sift{% endblock %}
+{% block content %}
+<section class="page-header">
+  <span class="eyebrow">Task Detail</span>
+  <h1>{{ service_name }}</h1>
+  <p>Task progress, processing notes, review state, and outputs are shown here as the job moves forward.</p>
+</section>
+
+<section class="console-grid console-grid--single">
+  <div
+    id="task-detail-panel"
+    hx-get="/ui/tasks/{{ task_id }}/card?container_id=task-detail-panel"
+    hx-trigger="load"
+    hx-swap="innerHTML">
+    {% set empty_title = "Loading task..." %}
+    {% set empty_body = "The task card will hydrate as soon as the task detail endpoint responds." %}
+    {% include "partials/empty_task_panel.html" %}
+  </div>
+</section>
+{% endblock %}

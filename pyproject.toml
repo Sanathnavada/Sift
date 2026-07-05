@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sift"
+version = "1.0.0"
+description = "FastAPI gateway for media, music, and Telegram automation workflows"
+requires-python = ">=3.12"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"sift.app.web" = [
+  "templates/**/*.html",
+  "static/**/*",
+]
+"sift.integrations.novnc" = ["*.html"]
+"sift.integrations.navidrome" = ["server/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

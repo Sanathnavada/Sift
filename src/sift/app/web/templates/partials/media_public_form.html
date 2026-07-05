@@ -1,0 +1,22 @@
+<div class="section-head section-head--compact">
+  <h3>Public profile</h3>
+  <p>Enter a username and post count. Sift fetches recent media, expands carousels, runs OCR on images, and transcribes videos when present.</p>
+</div>
+<div
+  id="instagram-auth-panel"
+  hx-get="/ui/media/instagram/auth/panel"
+  hx-trigger="load"
+  hx-swap="innerHTML">
+</div>
+<form class="stack-form" hx-post="/ui/media/public-user/submit" hx-target="#media-instagram-public-profile-task-panel" hx-swap="innerHTML" hx-disabled-elt="find button" hx-indicator="find .submit-indicator">
+  <div class="field">
+    <label class="label" for="media-public-username">Instagram username</label>
+    <input class="input" type="text" id="media-public-username" name="username" placeholder="gingerpotter21">
+  </div>
+  <div class="field">
+    <label class="label" for="media-public-firstn">First N posts</label>
+    <input class="input" type="number" min="1" value="3" id="media-public-firstn" name="first_n">
+  </div>
+  <button class="button button--wide" type="submit">Process Profile</button>
+  <span class="submit-indicator" aria-live="polite">Submitting...</span>
+</form>

@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}Sift | Media System{% endblock %}
+{% block content %}
+
+<audio
+  id="home-intro-audio"
+  src="/static/audio/home-intro.mp3"
+  preload="auto"
+  data-home-intro-audio
+  data-home-intro-delay-ms="2500"
+  aria-hidden="true">
+</audio>
+
+<section class="hero">
+  <div class="hero__copy">
+    <span class="eyebrow">SIFT</span>
+    <h1 class="hero__title">Build your own music library and media archive.</h1>
+    <p class="hero__subtitle">
+      Sift takes the music and media you already have saved, processes it in the background, and gives you files, transcripts, and results you can keep.
+    </p>
+  </div>
+</section>
+
+<section class="card-grid card-grid--two">
+
+  {% if feature_flags.music %}
+  <article class="card engine-card">
+    <span class="card__kicker">Music Workflow</span>
+    <h2 class="card__title">Build an offline library from the music you already saved.</h2>
+    <p class="card__body">Use Spotify selections, playlists, YouTube links, or track names to find matches, and download the final tracks.</p>
+    <a class="button button--wide" href="/music">Open Music Console</a>
+    {% if feature_flags.navidrome %}
+    <a class="button button--ghost button--wide" href="http://127.0.0.1:4533" target="_blank" rel="noreferrer">Open My Music Library</a>
+    {% endif %}
+  </article>
+  {% endif %}
+
+  {% if feature_flags.media %}
+  <article class="card engine-card">
+    <span class="card__kicker">Media Intelligence</span>
+    <h2 class="card__title">Saved media into text and files.</h2>
+    <p class="card__body">Process Instagram posts, reels, carousels, and YouTube videos into transcripts, OCR text, and local output files.</p>
+    <a class="button button--wide" href="/media">Open Media Console</a>
+  </article>
+  {% endif %}
+
+  
+</section>
+
+<section class="section-grid">
+  <article id="architecture" class="panel panel--wide">
+    <div class="section-head">
+      <span class="eyebrow">Architecture</span>
+      <h2>Built around a shared task runtime.</h2>
+    </div>
+    <p class="panel__meta">
+      Inputs enter through a small server-rendered UI. The backend keeps the long-running work separate from page rendering, then sends progress, review states, and final outputs back into the task cards.
+    </p>
+
+    <div class="architecture-map" aria-label="Sift architecture map">
+      <article class="architecture-node architecture-node--ui">
+        <span class="architecture-node__label">Sift Web UI</span>
+        <strong>Home · Media · Music</strong>
+        <p>HTMX forms, task cards, status polling, and session-aware panels.</p>
+      </article>
+
+      <div class="architecture-link architecture-link--submit" aria-hidden="true">submit jobs ↕ poll updates</div>
+
+      <article class="architecture-node architecture-node--session">
+        <span class="architecture-node__label">Session State</span>
+        <strong>UI continuity</strong>
+        <p>Active tabs, selected forms, connected-session panels, and last task panels.</p>
+      </article>
+
+      <article class="architecture-node architecture-node--runtime architecture-node--primary">
+        <span class="architecture-node__label">Task Runtime</span>
+        <strong>Lanes · queue · workers</strong>
+        <p>Task status, ETA estimates, progress events, and background execution.</p>
+      </article>
+
+      <article class="architecture-node architecture-node--status">
+        <span class="architecture-node__label">Runtime Status</span>
+        <strong>Operational feedback</strong>
+        <p>Queued jobs, running workers, and task-card refreshes.</p>
+      </article>
+
+      <div class="architecture-link architecture-link--branches" aria-hidden="true">route by workflow</div>
+
+      <article class="architecture-node architecture-node--media">
+        <span class="architecture-node__label">Media Pipeline</span>
+        <strong>Instagram + YouTube</strong>
+        <p>Post/reel/carousel extraction, OCR, transcription, and media artifacts.</p>
+      </article>
+
+      <article class="architecture-node architecture-node--music">
+        <span class="architecture-node__label">Music Pipeline</span>
+        <strong>Spotify + YouTube</strong>
+        <p>Metadata lookup, candidate search, match scoring, and downloads.</p>
+      </article>
+
+      <article class="architecture-node architecture-node--review">
+        <span class="architecture-node__label">Review + Outputs</span>
+        <strong>Results return to the UI</strong>
+        <p>Candidate review, transcripts, OCR text, completed downloads, and local files.</p>
+      </article>
+    </div>
+  </article>
+
+  <aside class="panel">
+    <div class="section-head">
+      <span class="eyebrow">Runtime Status</span>
+      <h2>Current processing state</h2>
+    </div>
+    <div
+      id="system-status-panel"
+      hx-get="/ui/system/status"
+      hx-trigger="load, every 8s"
+      hx-swap="innerHTML">
+      {% include "partials/system_status.html" %}
+    </div>
+  </aside>
+</section>
+
+<section>
+  <article class="panel">
+    <div class="section-head section-head--compact">
+      <span class="eyebrow">Project Context</span>
+      <h2>Why I built this</h2>
+    </div>
+    <p class="panel__meta">
+      I built Sift around two problems I kept running into.
+    </p>
+    <p class="panel__meta">
+      The first was saved media. I would save Instagram reels, posts, carousels, and YouTube videos but later found it hard and laborious to scroll through and search for them. I wanted one pipeline that could take these sources as inputs, process them, and present them to me all together so that I could access the information at a later time.
+    </p>
+    <p class="panel__meta">
+      The second was music. I already had an extensive collection spread across Spotify, playlists, YouTube links, track names, and other sources. What I wanted was my own offline library built on top of that existing collection, without manual search and download. One that I could access anywhere, anytime.
+    </p>
+    <p class="panel__meta">
+      Sift brings both workflows into one task-based system: submit the source, let the backend process it, review anything uncertain, and keep the final output organized.
+    </p>
+  </article>
+</section>
+
+<section id="engineering-notes" class="card-grid card-grid--three">
+  <article class="note-card">
+    <h3>Lane-based task runtime</h3>
+    <p>
+      Music downloads, Instagram extraction, OCR, and transcription can take very different amounts of time. Sift runs them through separate task lanes, tracks queue position, and keeps the UI updated without blocking the rest of the app.
+    </p>
+  </article>
+
+  <article class="note-card">
+    <h3>Task lifecycle tracking</h3>
+    <p>
+      Each run carries its own status, metadata, artifacts, errors, review items, and completion state. That lets Sift handle jobs that move through queueing, processing, review, failure, and final output without treating them as simple one-shot requests.
+    </p>
+  </article>
+
+  <article class="note-card">
+    <h3>Mixed-content pipeline design</h3>
+    <p>
+      Sift handles inputs that can contain images, videos, audio, captions, and carousel items inside the same run. The backend separates each part into the right processing path and then assembles the outputs back into one result.
+    </p>
+  </article>
+</section>
+{% endblock %}

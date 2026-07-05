@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Telegram Agent | Sift{% endblock %}
+{% block content %}
+<section class="page-header">
+  <span class="eyebrow">Telegram Agent</span>
+  <h1>Control the Telegram runtime through the same gateway task model.</h1>
+  <p>The runtime stays inside <code>i_node</code>; the gateway only exposes task-aware controls.</p>
+</section>
+
+<section class="console-grid console-grid--telegram">
+  <div class="panel">
+    <div
+      id="telegram-runtime-panel"
+      hx-get="/ui/telegram/runtime"
+      hx-trigger="load"
+      hx-swap="innerHTML">
+      {% set empty_title = "Loading runtime state..." %}
+      {% set empty_body = "The Telegram runtime card will hydrate here once the UI route responds." %}
+      {% include "partials/empty_task_panel.html" %}
+    </div>
+  </div>
+
+  <div class="stack">
+    <article class="note-card">
+      <h3>i_node owns runtime</h3>
+      <p>The Telegram bot logic remains inside <code>i_node</code>. The gateway does not duplicate or reimplement it.</p>
+    </article>
+    <article class="note-card">
+      <h3>app_node owns controls</h3>
+      <p>Start, stop, and status APIs wrap the runtime with the same task vocabulary used elsewhere in the project.</p>
+    </article>
+    <article class="note-card">
+      <h3>Known tradeoff</h3>
+      <p>The Telegram task is long-lived and currently shares the same single-worker task framework as heavy processing jobs.</p>
+    </article>
+  </div>
+</section>
+{% endblock %}

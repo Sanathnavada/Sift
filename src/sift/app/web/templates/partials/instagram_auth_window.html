@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Instagram Login Console</title>
+  <link rel="stylesheet" href="/static/css/app.css?v=instagram-popup-auth-2">
+  <script src="/static/js/app.js?v=auth-runtime-fix-2" defer></script>
+</head>
+<body
+  class="auth-window-body auth-window-body--browser-only"
+  data-instagram-auth-popup-page
+  data-instagram-auth-state-url="{{ auth_state_url }}">
+  <main class="auth-window-shell auth-window-shell--browser-only">
+    {% if novnc_enabled %}
+    <section class="instagram-browser-shell instagram-browser-shell--popup instagram-browser-shell--fullscreen">
+      <iframe
+        class="instagram-browser-frame instagram-browser-frame--popup instagram-browser-frame--fullscreen"
+        src="{{ novnc_url }}"
+        title="Instagram login browser"
+        allow="clipboard-read; clipboard-write">
+      </iframe>
+    </section>
+
+    <div id="instagram-auth-window-status" class="status-pill status-pill--accent auth-window-status-overlay">
+      Waiting for login
+    </div>
+    {% else %}
+    <section class="task-card auth-window-local-card">
+      <div class="task-card__header">
+        <div>
+          <span class="task-card__kicker">Local browser mode</span>
+          <h3>Use the Chromium window on this machine</h3>
+        </div>
+        <span id="instagram-auth-window-status" class="status-pill status-pill--warning">local</span>
+      </div>
+      <p class="task-card__body">
+        A Playwright Chromium window should open on this machine. Complete Instagram login there.
+        This popup will close after the backend saves the session.
+      </p>
+    </section>
+    {% endif %}
+  </main>
+</body>
+</html>

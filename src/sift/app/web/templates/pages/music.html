@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Music Workflow | Sift{% endblock %}
+{% block content %}
+<section class="page-header">
+  <span class="eyebrow">Music Workflow</span>
+  <h1>Match, review, and download music.</h1>
+  <p>This is for when you need to download a one off song or have built an extensive library on Spotify and need a way to replicate it locally.</p>
+</section>
+
+<section class="segment-bar" data-tab-group data-workspace="music">
+  <button
+    class="segment-bar__button {% if music_active_form != 'spotify-library' %}is-active{% endif %}"
+    hx-get="/ui/music/forms/download"
+    hx-target="#music-form-panel"
+    hx-swap="innerHTML"
+    data-tab
+    data-workspace-mode="download">
+    Music Download
+  </button>
+  <button
+    class="segment-bar__button {% if music_active_form == 'spotify-library' %}is-active{% endif %}"
+    hx-get="/ui/music/forms/spotify-library"
+    hx-target="#music-form-panel"
+    hx-swap="innerHTML"
+    data-tab
+    data-workspace-mode="spotify-library">
+    Spotify Library
+  </button>
+</section>
+
+<section class="console-grid">
+  <div class="panel" id="music-form-panel">
+    {% include music_form_template %}
+  </div>
+
+  <div
+    class="panel {% if music_active_form == 'spotify-library' %}is-hidden{% endif %}"
+    id="music-task-panel"
+    data-music-task-mode="download">
+    {{ music_task_panel_html|safe }}
+  </div>
+
+  <div
+    class="panel {% if music_active_form != 'spotify-library' %}is-hidden{% endif %}"
+    id="music-library-auth-panel"
+    data-music-task-mode="spotify-library">
+    {{ music_library_auth_panel_html|safe }}
+  </div>
+</section>
+
+<section
+  id="music-library-panel"
+  class="music-library-stage {% if music_active_form != 'spotify-library' %}is-hidden{% endif %}"
+  data-music-task-mode="spotify-library">
+  {{ music_library_panel_html|safe }}
+</section>
+<section
+  id="music-library-task-panel"
+  class="music-library-stage {% if music_active_form != 'spotify-library' %}is-hidden{% endif %}"
+  data-music-task-mode="spotify-library">
+  {{ music_library_task_panel_html|safe }}
+</section>
+
+{% include "partials/music_download_tray.html" %}
+
+<section class="card-grid card-grid--three">
+  <article class="note-card">
+  <h3>Concurrency</h3>
+  <p>Playlist and library runs resolve multiple tracks in parallel instead of searching one song at a time. That keeps larger music selections practical without turning the flow into a slow serial process.</p>
+</article>
+  <article class="note-card">
+  <h3>Caching</h3>
+  <p>Accepted YouTube matches are cached against track metadata and the matcher version. Repeated runs can reuse known matches, while matcher changes can safely invalidate older decisions.</p>
+</article>
+ <article class="note-card">
+  <h3>Match scoring</h3>
+  <p>The resolver checks title coverage, artist signals, duration mismatch, source quality, and unwanted versions like covers, remixes, karaoke, slowed tracks, or live recordings before accepting a candidate.</p>
+</article>
+</section>
+{% endblock %}

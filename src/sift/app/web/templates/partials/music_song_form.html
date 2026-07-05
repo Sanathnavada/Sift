@@ -1,0 +1,16 @@
+<div class="section-head section-head--compact">
+  <h3>Direct music input</h3>
+  <p>Enter a song name, or its youtube/spotify link. The backend normalizes each input, searches for likely matches, scores the candidates, and asks for review only when confidence is low.</p>
+</div>
+<form class="stack-form" hx-post="/ui/music/song/submit" hx-target="#music-task-panel" hx-swap="innerHTML" hx-disabled-elt="find button" hx-indicator="find .submit-indicator">
+  <div class="field">
+    <label class="label" for="music-song-query">Song, link, or search input</label>
+    <input class="input" type="text" id="music-song-query" name="query" placeholder="slow dancing in the dark — Joji, or a direct music link">
+  </div>
+  <div class="field">
+    <label class="label" for="music-song-batch">Batch inputs</label>
+    <textarea class="textarea" id="music-song-batch" name="queries_text" rows="5" placeholder="One search or link per line"></textarea>
+  </div>
+  <button class="button button--wide" type="submit">Start Music Job</button>
+  <span class="submit-indicator" aria-live="polite">Submitting...</span>
+</form>

@@ -1,0 +1,17 @@
+<div class="section-head section-head--compact">
+  <h3>Library selection</h3>
+  <p> You can fetch your saved albums, playlists, and library tracks, then choose everything or pick individual tracks across different collections.</p>
+</div>
+
+<div class="stack">
+  <article class="note-card note-card--inline">
+    <h3>How it works</h3>
+    <p>Connect your library, choose the tracks you want, and submit them as one batch. Sift will process the selection, separate uncertain matches for review, and keep completed downloads in the session tray.</p>
+  </article>
+
+  <div class="button-row">
+    <button class="button" hx-post="/ui/music/user/auth/start" hx-target="#music-library-auth-panel" hx-swap="innerHTML">
+      Connect Library
+    </button>
+  </div>
+</div>

@@ -1,0 +1,24 @@
+<article class="spotify-library-card">
+  <div class="task-card__header">
+    <div>
+      <span class="task-card__kicker">Library Selection</span>
+      <h3>Choose what to process</h3>
+    </div>
+    <span class="status-pill status-pill--success">ready</span>
+  </div>
+
+  <p class="task-card__body">Select full playlists or expand them to choose individual tracks. Completed downloads are added to the session tray, while low-confidence matches appear below for review.</p>
+
+  {% if library_warnings %}
+  <div class="callout">
+    <strong>Partial library fetch</strong>
+    <p>{{ library_warnings|length }} playlist(s) could not be fetched due to network or provider timeouts. You can retry later.</p>
+  </div>
+  {% endif %}
+
+  {% include "partials/music_playlist_selector.html" %}
+</article>
+
+{% if music_download_tray_oob %}
+{% include "partials/music_download_tray.html" %}
+{% endif %}

@@ -1,0 +1,16 @@
+<div class="section-head section-head--compact">
+  <h3>Video link audio</h3>
+  <p>Use this when you already have direct video links or search-oriented inputs. Sift turns each input into a tracked music job and pauses only when a result needs review.</p>
+</div>
+<form class="stack-form" hx-post="/ui/music/youtube/submit" hx-target="#music-task-panel" hx-swap="innerHTML" hx-disabled-elt="find button" hx-indicator="find .submit-indicator">
+  <div class="field">
+    <label class="label" for="music-yt-input">Video URL or input</label>
+    <input class="input" type="text" id="music-yt-input" name="input" placeholder="https://youtu.be/... or a search phrase">
+  </div>
+  <div class="field">
+    <label class="label" for="music-yt-batch">Batch inputs</label>
+    <textarea class="textarea" id="music-yt-batch" name="inputs_text" rows="5" placeholder="One input per line"></textarea>
+  </div>
+  <button class="button button--wide" type="submit">Start Music Job</button>
+  <span class="submit-indicator" aria-live="polite">Submitting...</span>
+</form>

@@ -1,0 +1,16 @@
+<div class="section-head section-head--compact">
+  <h3>Music link input</h3>
+  <p>Paste track, playlist, or album links and let Sift turn them into a scored music job with review for uncertain matches.</p>
+</div>
+<form class="stack-form" hx-post="/ui/music/link/submit" hx-target="#music-task-panel" hx-swap="innerHTML" hx-disabled-elt="find button" hx-indicator="find .submit-indicator">
+  <div class="field">
+    <label class="label" for="music-link-url">Music URL</label>
+    <input class="input" type="text" id="music-link-url" name="url" placeholder="https://open.spotify.com/track/...">
+  </div>
+  <div class="field">
+    <label class="label" for="music-link-batch">Batch URLs</label>
+    <textarea class="textarea" id="music-link-batch" name="urls_text" rows="5" placeholder="One music URL per line"></textarea>
+  </div>
+  <button class="button button--wide" type="submit">Start Music Job</button>
+  <span class="submit-indicator" aria-live="polite">Submitting...</span>
+</form>

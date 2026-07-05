@@ -1,0 +1,16 @@
+<div class="section-head section-head--compact">
+  <h3>YouTube transcription</h3>
+  <p>Paste one or more YouTube URLs. The pipeline extracts audio, runs Whisper transcription, and returns readable text without forcing you to watch and summarize the video manually.</p>
+</div>
+<form class="stack-form" hx-post="/ui/media/youtube/submit" hx-target="#media-youtube-task-panel" hx-swap="innerHTML" hx-disabled-elt="find button" hx-indicator="find .submit-indicator">
+  <div class="field">
+    <label class="label" for="media-youtube-input">YouTube URL or batch input</label>
+    <input class="input" type="text" id="media-youtube-input" name="input" placeholder="https://youtu.be/... or one video URL per line below">
+  </div>
+  <div class="field">
+    <label class="label" for="media-youtube-batch">Batch inputs</label>
+    <textarea class="textarea" id="media-youtube-batch" name="inputs_text" rows="4" placeholder="One video URL per line"></textarea>
+  </div>
+  <button class="button button--wide" type="submit">Transcribe Video</button>
+  <span class="submit-indicator" aria-live="polite">Submitting...</span>
+</form>

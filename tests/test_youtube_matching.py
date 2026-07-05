@@ -1,15 +1,9 @@
-import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-
-MUSIC_NODE = Path(__file__).resolve().parents[1] / "music_node"
-if str(MUSIC_NODE) not in sys.path:
-    sys.path.insert(0, str(MUSIC_NODE))
-
-from models import Track, VideoResult  # noqa: E402
-from services.youtube import YouTubeResolver  # noqa: E402
+from sift.engines.music.models import Track, VideoResult
+from sift.engines.music.services.youtube import YouTubeResolver
 
 
 class YouTubeMatchingTests(unittest.TestCase):
@@ -154,26 +148,48 @@ class YouTubeMatchingTests(unittest.TestCase):
         )
         self.resolver._run_yt_command = lambda query, limit: [candidate]
 
-        result = self.resolver._resolve_track(track)
+        result = self.resolver.resolve_track(track)
 
         self.assertIsNone(result["url"])
         self.assertEqual(result["candidates"][0]["url"], candidate.url)
 
+    def test_public_resolve_track_reuses_cached_match(self):
+        track = Track(title="Cached Song", artist="Artist", album="Album", duration_ms=180_000)
+        candidate = VideoResult(
+            id="cached",
+            title="Cached Song",
+            channel="Artist - Topic",
+            duration=180,
+            url="https://youtube.example/cached",
+            description="Provided to YouTube by Example Records",
+            rank=1,
+        )
+        resolver = YouTubeResolver()
+        resolver.cache = {}
+        resolver._run_yt_command = lambda query, limit: [candidate]
+
+        first = resolver.resolve_track(track)
+        resolver._run_yt_command = lambda query, limit: (_ for _ in ()).throw(AssertionError("cache miss"))
+        second = resolver.resolve_track(track)
+
+        self.assertEqual(first["url"], candidate.url)
+        self.assertEqual(second["url"], candidate.url)
+
 
 class YouTubeJobReviewTests(unittest.TestCase):
-    @patch("app_node.routers.music.register_directory_artifacts", return_value=[])
-    @patch("app_node.routers.music.create_job_output_dir")
-    @patch("app_node.routers.music.YouTubeResolver")
+    @patch("sift.app.api.routes.music._register_music_artifacts", return_value=[])
+    @patch("sift.app.api.routes.music.create_job_output_dir")
+    @patch("sift.app.api.routes.music.YouTubeResolver")
     def test_youtube_job_returns_review_candidates(
         self,
         resolver_class,
         create_output_dir,
         _register_artifacts,
     ):
-        from app_node.routers.music import _yt_job
+        from sift.app.api.routes.music import _yt_job
 
         create_output_dir.return_value = (Path("."), "ephemeral")
-        resolver_class.return_value._resolve_track.return_value = {
+        resolver_class.return_value.resolve_track.return_value = {
             "url": None,
             "error": "Low confidence (best score: 58)",
             "candidates": [{

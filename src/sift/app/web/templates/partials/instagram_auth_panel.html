@@ -1,0 +1,130 @@
+<article
+  class="instagram-auth-card"
+  data-instagram-auth-card
+  data-instagram-auth-connected="{{ 'true' if auth_status.authenticated else 'false' }}"
+  {% if auth_window_url %}data-instagram-auth-window-url="{{ auth_window_url }}"{% endif %}
+  {% if auth_close_url %}data-instagram-auth-close-url="{{ auth_close_url }}"{% endif %}
+  {% if open_popup and auth_window_url %}data-instagram-auth-open-popup="true"{% endif %}
+  {% if auth_task and auth_task.status in ['queued', 'running'] %}
+  hx-get="{{ auth_poll_url }}"
+  hx-trigger="every 2s"
+  hx-swap="outerHTML"
+  {% endif %}>
+  <div class="task-card__header">
+    <div>
+      <span class="task-card__kicker">Instagram Connection</span>
+      <h3>
+        {% if auth_status.authenticated %}
+        Instagram connected
+        {% elif auth_task and auth_task.status == 'failed' %}
+        Instagram connection failed
+        {% elif auth_task and auth_task.status in ['queued', 'running'] %}
+        Waiting for login approval
+        {% else %}
+        Connect Instagram for reliable extraction
+        {% endif %}
+      </h3>
+    </div>
+    <span class="status-pill status-pill--{% if auth_status.authenticated %}success{% elif auth_task and auth_task.status == 'failed' %}danger{% elif auth_task and auth_task.status in ['queued', 'running'] %}accent{% else %}warning{% endif %}">
+      {% if auth_status.authenticated %}connected{% elif auth_task %}{{ auth_task.status.replace('_', ' ') }}{% else %}login required{% endif %}
+    </span>
+  </div>
+
+  {% if auth_status.authenticated %}
+  <p class="task-card__body">
+    {% if auth_status.username %}
+    Logged in as @{{ auth_status.username }}. Sift will reuse this connected session for posts, profiles, and private collections when Instagram restricts metadata or media URLs.
+    {% else %}
+    Instagram is connected. Sift will reuse this session for posts, profiles, and private collections when Instagram restricts metadata or media URLs.
+    {% endif %}
+  </p>
+  {% elif auth_task and auth_task.status in ['queued', 'running'] %}
+  <ol class="step-list">
+    <li>The login console has opened in a separate window.</li>
+    <li>Complete login or 2FA there.</li>
+    <li>This card updates automatically and the popup closes when the session is ready.</li>
+  </ol>
+  {% elif auth_task and auth_task.status == 'failed' %}
+  <div class="callout callout--danger">
+    <strong>Login failed</strong>
+    <p>{{ auth_error_message or "Instagram login did not complete." }}</p>
+  </div>
+  {% else %}
+  <p class="task-card__body">
+    Some public posts can be processed without login, but Instagram often restricts carousel metadata and media URLs. A connected session gives the pipeline a more reliable extraction path.
+  </p>
+  {% endif %}
+
+  {% if reset_done %}
+  <div class="callout callout--warning">
+    <strong>Instagram session reset</strong>
+    <p>The saved session was removed. Start a fresh login to reconnect Instagram.</p>
+  </div>
+  {% elif status_checked %}
+  <div class="callout">
+    <strong>Status checked</strong>
+    <p>Checked at {{ checked_at }}.
+      {% if auth_status.authenticated %}
+      Saved Instagram session is valid.
+      {% elif auth_status.session_file_exists %}
+      A session file exists, but required Instagram cookies are missing or expired. Refresh Instagram login.
+      {% else %}
+      No saved Instagram session was found. Connect Instagram for reliable extraction to continue.
+      {% endif %}
+    </p>
+  </div>
+  {% endif %}
+
+  <div class="button-row">
+    {% if auth_browser_enabled %}
+    <button
+      class="button"
+      type="button"
+      hx-post="/ui/media/instagram/auth/start"
+      hx-target="#instagram-auth-panel"
+      hx-swap="innerHTML"
+      hx-disabled-elt="this"
+      data-instagram-auth-popup-trigger>
+      {% if auth_status.authenticated %}Refresh Instagram Login{% else %}Connect Instagram{% endif %}
+    </button>
+    {% endif %}
+
+    {% if auth_window_url and not auth_status.authenticated %}
+    <a
+      class="button button--ghost"
+      href="{{ auth_window_url }}"
+      target="instagram-auth"
+      rel="noreferrer"
+      data-instagram-auth-popup-link
+      {% if auth_close_url %}data-instagram-auth-close-url="{{ auth_close_url }}"{% endif %}>
+      Open Login Window
+    </a>
+    {% endif %}
+
+    <button
+      class="button button--ghost"
+      type="button"
+      hx-get="/ui/media/instagram/auth/panel?checked=true"
+      hx-target="#instagram-auth-panel"
+      hx-swap="innerHTML">
+      Check Status
+    </button>
+
+    <button
+      class="button button--ghost"
+      type="button"
+      hx-post="/ui/media/instagram/auth/reset"
+      hx-target="#instagram-auth-panel"
+      hx-swap="innerHTML"
+      hx-confirm="Reset the saved Instagram session?">
+      Reset Session
+    </button>
+  </div>
+
+  {% if not auth_browser_enabled %}
+  <div class="callout callout--danger">
+    <strong>Browser auth disabled</strong>
+    <p>This deployment has disabled interactive Instagram browser authentication.</p>
+  </div>
+  {% endif %}
+</article>
