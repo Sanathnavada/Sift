@@ -45,8 +45,8 @@ RUN mkdir -p \
     /app/downloads \
     && chmod +x /usr/local/bin/docker-entrypoint.sh
 
-EXPOSE 8000 6080
+EXPOSE 7860
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
-CMD ["python", "-m", "uvicorn", "sift.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "uvicorn", "sift.app.main:app", "--host", "0.0.0.0", "--port", "7860"]
