@@ -7,7 +7,6 @@ sdk: docker
 app_port: 7860
 ---
 
-
 # Sift
 
 Sift is a local-first FastAPI application for downloading, processing, reviewing, and packaging media/music outputs through a clean server-rendered UI.
