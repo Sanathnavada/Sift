@@ -48,4 +48,6 @@ RUN mkdir -p \
 EXPOSE 7860
 
 
-CMD ["python", "-m", "uvicorn", "sift.app.main:app", "--host", "0.0.0.0", "--port", "7860"]
+EXPOSE 7860
+
+CMD ["python", "-c", "from fastapi import FastAPI; import uvicorn; app=FastAPI(); app.get('/')(lambda: {'status':'ok','image':'sift-heavy'}); uvicorn.run(app, host='0.0.0.0', port=7860)"]
