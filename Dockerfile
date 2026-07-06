@@ -47,6 +47,5 @@ RUN mkdir -p \
 
 EXPOSE 7860
 
-ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 CMD ["python", "-m", "uvicorn", "sift.app.main:app", "--host", "0.0.0.0", "--port", "7860"]
