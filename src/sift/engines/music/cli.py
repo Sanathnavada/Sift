@@ -30,10 +30,12 @@ USAGE
   # Fetches all playlists from your Spotify account via OAuth.
   # First run opens a browser tab to approve Spotify access (token cached after that).
   python -m sift.engines.music.cli --mode user
+  python -m sift.engines.music.cli --mode user --list-only
 
   # --- MODE: link ---
   # Downloads a specific Spotify playlist or album via its public URL.
   python -m sift.engines.music.cli --mode link --input "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M"
+  python -m sift.engines.music.cli --mode link --input "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M" --list-only
 
   # --- MODE: song ---
   # Searches YouTube for a song by name and downloads the best match.
@@ -94,6 +96,28 @@ def save_text_backup(playlist_name: str, tracks: list):
         f.write("-" * 40 + "\n")
 
 
+def export_track_lists(playlists: dict, output_path: Path = None) -> Path:
+    """Writes selected Spotify playlist/album track lists without downloading."""
+    if output_path is None:
+        output_path = SPOTIFY_BACKUP_FILE.parent / "spotify_selected_track_lists.txt"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write("Spotify Selected Track Lists\n")
+        f.write("============================\n\n")
+        for playlist_name, tracks in playlists.items():
+            f.write(f"Playlist: {playlist_name}\n")
+            f.write(f"Tracks: {len(tracks)}\n")
+            f.write("-" * 40 + "\n")
+            for index, track in enumerate(tracks, 1):
+                artist = track.artist or "Unknown"
+                album = f" [{track.album}]" if track.album else ""
+                f.write(f"{index}. {track.title} - {artist}{album}\n")
+            f.write("\n")
+
+    return output_path
+
+
 def filter_playlists_interactively(playlists: dict) -> dict:
     """
     The Intervention Layer: Shows a menu and returns only the playlists the user wants.
@@ -152,6 +176,8 @@ def main():
     parser.add_argument("--outdir", default=None,
                         help="(yt mode) Directory to save the audio file. "
                              "Omit to use ephemeral temp storage (for future UI use).")
+    parser.add_argument("--list-only", action="store_true",
+                        help="For Spotify user/link modes, export track lists without downloading.")
     args = parser.parse_args()
 
     # Initialize Services
@@ -231,6 +257,15 @@ def main():
             print("❌ No playlists found.")
             return
         playlists_to_process = filter_playlists_interactively(full_library)
+
+    if args.list_only:
+        if args.mode not in {"user", "link"}:
+            logger.error("--list-only is only supported for Spotify user/link modes")
+            return
+        output_path = export_track_lists(playlists_to_process)
+        print(f"\nTrack list exported to: {output_path}")
+        print("No YouTube resolution or downloads were run.")
+        return
 
     # --- PIPELINE START ---
     total = len(playlists_to_process)

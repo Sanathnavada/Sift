@@ -35,12 +35,12 @@ logs/
 *.sqlite-wal
 cookies.txt
 .cache/
-
+Sanath_Final_bot/
 # IDE / OS
 .idea/
 .vscode/
 .DS_Store
-
+code_latest.zip
 # Local/private files
 dev-mes_vm_key_1205.pem
 legacy_code/
