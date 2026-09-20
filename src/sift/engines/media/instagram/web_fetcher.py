@@ -23,6 +23,7 @@ _WEB_APP_ID = "936619743392459"
 _WEB_BASE   = "https://www.instagram.com"
 _API_BASE   = f"{_WEB_BASE}/api/v1"
 _SC_RE = re.compile(r"instagram\.com/(?:p|reel|tv)/([A-Za-z0-9_-]+)")
+_SAVED_COLLECTION_RE = re.compile(r"instagram\.com/[^/]+/saved/([^/]+)/([^/?#]+)/?")
 
 _BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -677,6 +678,70 @@ class WebCollectionFetcher:
             resp.raise_for_status()
         return resp.json()
 
+    @staticmethod
+    def _collection_slug(name: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
+
+    def _add_saved_cookies_to_context(self, context, saved_cookies: dict) -> None:
+        context.add_cookies([
+            {"name": k, "value": v, "domain": ".instagram.com", "path": "/"}
+            for k, v in saved_cookies.items()
+            if k in {"sessionid", "csrftoken", "ds_user_id", "ig_did", "mid", "datr"}
+        ])
+
+    def _find_collection_id_via_browser(self, collection_name: str) -> str | None:
+        """Discover a saved collection id from Instagram's authenticated web UI."""
+        if not self.username:
+            return None
+
+        with open(self.session_file) as f:
+            saved_cookies = json.load(f)
+
+        wanted_slug = self._collection_slug(collection_name)
+        with sync_playwright() as p:
+            browser = None
+            context = None
+            page = None
+            try:
+                browser = p.chromium.launch(
+                    headless=False,
+                    slow_mo=50,
+                    args=_chromium_launch_args(),
+                )
+                context = _new_browser_context(browser)
+                self._add_saved_cookies_to_context(context, saved_cookies)
+                page = context.new_page()
+                _prepare_page_for_clean_vnc(page)
+
+                page.goto(f"{_WEB_BASE}/{self.username}/saved/", wait_until="domcontentloaded", timeout=60_000)
+                for _ in range(5):
+                    page.wait_for_timeout(2_000)
+                    links = page.eval_on_selector_all(
+                        'a[href*="/saved/"]',
+                        """
+                        links => links.map(link => ({
+                          href: link.href,
+                          text: (link.innerText || link.textContent || link.getAttribute("aria-label") || "").trim()
+                        }))
+                        """,
+                    )
+                    for link in links:
+                        href = link.get("href") or ""
+                        text = link.get("text") or ""
+                        match = _SAVED_COLLECTION_RE.search(href)
+                        if not match:
+                            continue
+                        slug, collection_id = match.groups()
+                        if text == collection_name or slug == wanted_slug:
+                            logger.info("Found collection id via browser UI: %s", collection_id)
+                            return collection_id
+
+                    page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            finally:
+                self._close_browser_resources(page, context, browser)
+
+        return None
+
     def fetch_public_profile(self, username: str, first_n: int = 0, last_n: int = 0) -> list:
         self._ensure_session()
         profile_username = username.strip().lstrip("@")
@@ -720,11 +785,7 @@ class WebCollectionFetcher:
                     args=_chromium_launch_args(),
                 )
                 context = _new_browser_context(browser)
-                context.add_cookies([
-                    {"name": k, "value": v, "domain": ".instagram.com", "path": "/"}
-                    for k, v in saved_cookies.items()
-                    if k in {"sessionid", "csrftoken", "ds_user_id", "ig_did", "mid", "datr"}
-                ])
+                self._add_saved_cookies_to_context(context, saved_cookies)
                 page = context.new_page()
                 _prepare_page_for_clean_vnc(page)
 
@@ -815,27 +876,114 @@ class WebCollectionFetcher:
         walk(value)
         return found
 
-    def fetch_collection(self, collection_name: str, first_n: int = 0, last_n: int = 0) -> list:
-        # Step 1: use requests to get the collection ID (this endpoint works fine)
-        self._ensure_session()
-        logger.info(f"[Web API] Fetching collection: '{collection_name}'")
+    @staticmethod
+    def _saved_collection_ids(value: dict) -> set[str]:
+        ids = value.get("saved_collection_ids") or []
+        return {str(item) for item in ids}
 
-        col_id = None
+    def _collection_matches(self, value: dict, collection_id: str) -> bool:
+        wanted = str(collection_id)
+        if wanted in self._saved_collection_ids(value):
+            return True
+        media = value.get("media")
+        return isinstance(media, dict) and wanted in self._saved_collection_ids(media)
+
+    def _fetch_collection_via_saved_posts(
+        self,
+        collection_id: str,
+        first_n: int = 0,
+        last_n: int = 0,
+    ) -> list:
+        """Fetch saved posts and filter them by saved_collection_ids."""
+        wanted = str(collection_id)
+        limit = first_n or last_n or 0
         max_id = ""
+        items = []
+        seen_codes: set[str] = set()
+        page_count = 0
+        empty_match_pages = 0
+
         while True:
-            data = self._api_get("collections/list/", params={
-                "collection_types": '["ALL_MEDIA_AUTO_COLLECTION","PRODUCT_AUTO_COLLECTION","MEDIA"]',
-                "max_id": max_id,
-            })
-            for item in data.get("items", []):
-                if item.get("collection_name") == collection_name:
-                    col_id = item.get("collection_id")
-                    break
-            if col_id:
+            page_count += 1
+            params = {"max_id": max_id} if max_id else {}
+            data = self._api_get("feed/saved/posts/", params=params)
+            page_items = data.get("items", [])
+            matched_before = len(items)
+            for raw_item in page_items:
+                if not self._collection_matches(raw_item, wanted):
+                    continue
+                media = raw_item.get("media") if isinstance(raw_item.get("media"), dict) else raw_item
+                normalized = self._normalize(media)
+                code = normalized.get("code")
+                if code and code not in seen_codes:
+                    seen_codes.add(code)
+                    items.append(normalized)
+            logger.info(
+                "Saved feed page %s: scanned %s item(s), matched %s new item(s), total matched %s.",
+                page_count,
+                len(page_items),
+                len(items) - matched_before,
+                len(items),
+            )
+            if len(items) == matched_before:
+                empty_match_pages += 1
+            else:
+                empty_match_pages = 0
+
+            if limit and len(items) >= limit:
+                break
+            if items and empty_match_pages >= 12:
+                logger.info(
+                    "Stopping saved-feed scan after %s consecutive page(s) with no new collection matches.",
+                    empty_match_pages,
+                )
                 break
             max_id = data.get("next_max_id")
             if not max_id:
                 break
+
+        logger.info("Fetched %s posts by filtering saved posts for collection id %s.", len(items), wanted)
+        return self._slice(items, first_n, last_n)
+
+    def fetch_collection(
+        self,
+        collection_name: str,
+        first_n: int = 0,
+        last_n: int = 0,
+        collection_id: str | None = None,
+    ) -> list:
+        # Step 1: try the lightweight web API to get the collection ID.
+        self._ensure_session()
+        logger.info(f"[Web API] Fetching collection: '{collection_name}'")
+
+        col_id = collection_id
+        if col_id:
+            logger.info("Using supplied collection id: %s", col_id)
+        else:
+            max_id = ""
+            try:
+                while True:
+                    data = self._api_get("collections/list/", params={
+                        "collection_types": '["ALL_MEDIA_AUTO_COLLECTION","PRODUCT_AUTO_COLLECTION","MEDIA"]',
+                        "max_id": max_id,
+                    })
+                    for item in data.get("items", []):
+                        if item.get("collection_name") == collection_name:
+                            col_id = item.get("collection_id")
+                            break
+                    if col_id:
+                        break
+                    max_id = data.get("next_max_id")
+                    if not max_id:
+                        break
+            except requests.HTTPError as exc:
+                status = exc.response.status_code if exc.response is not None else None
+                if status != 404:
+                    raise
+                logger.warning(
+                    "Instagram collections/list endpoint returned 404; falling back to browser UI discovery."
+                )
+                col_id = self._find_collection_id_via_browser(collection_name)
 
         if not col_id:
             logger.error(f"❌ Collection '{collection_name}' not found. Check name (case-sensitive).")
@@ -847,6 +995,21 @@ class WebCollectionFetcher:
             raise RuntimeError(
                 "Instagram session is connected, but the logged-in username could not be resolved. "
                 "Refresh Instagram login, then retry the private collection workflow."
+            )
+
+        try:
+            items = self._fetch_collection_via_saved_posts(col_id, first_n, last_n)
+            if items:
+                return items
+            logger.warning(
+                "Saved-posts feed returned no items for collection id %s; falling back to browser interception.",
+                col_id,
+            )
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            logger.warning(
+                "Saved-posts feed lookup failed with status %s; falling back to browser interception.",
+                status,
             )
 
         # Step 2: use Playwright to navigate to the collection page and intercept
@@ -875,11 +1038,7 @@ class WebCollectionFetcher:
                     args=_chromium_launch_args(),
                 )
                 context = _new_browser_context(browser)
-                context.add_cookies([
-                    {"name": k, "value": v, "domain": ".instagram.com", "path": "/"}
-                    for k, v in saved_cookies.items()
-                    if k in {"sessionid", "csrftoken", "ds_user_id", "ig_did", "mid", "datr"}
-                ])
+                self._add_saved_cookies_to_context(context, saved_cookies)
                 page = context.new_page()
                 _prepare_page_for_clean_vnc(page)
 

@@ -18,23 +18,23 @@ Mode	Implementation
 Usage:
 
 # Saved collection (first run — opens browser for login):
-python -m sift.engines.media.cli --username sanath_navada --password S9dqJ2zPx_XLDwj --private-user Mind --outdir ./data/my_collections
+python -m sift.engines.media.cli --username YOUR_USERNAME --password YOUR_PASSWORD --private-user Mind --outdir ./data/CLI_mode/my_collections
 
 # Saved collection (subsequent runs — no credentials needed):
-python -m sift.engines.media.cli --private-user Mind --outdir ./data/my_collections
+python -m sift.engines.media.cli --private-user Mind --outdir ./data/CLI_mode/my_collections
 
 # Public user feed (no auth needed):
-python -m sift.engines.media.cli --public-user gingerpotter21 --first-n 3 --outdir ./data/public
+python -m sift.engines.media.cli --public-user gingerpotter21 --first-n 3 --outdir ./data/CLI_mode/public
 
 # Single post:
-python -m sift.engines.media.cli --post https://www.instagram.com/p/Cqd7ZJdDLLj/ --outdir ./data/posts
+python -m sift.engines.media.cli --post https://www.instagram.com/p/Cqd7ZJdDLLj/ --outdir ./data/CLI_mode/posts
 
 # Bulk URLs from file:
 
  # YouTube:
- python -m sift.engines.media.cli --youtube "data/my_transcripts/urls.txt" --outdir "./data/my_transcripts"
+ python -m sift.engines.media.cli --youtube "data/CLI_mode/my_transcripts/urls.txt" --outdir "./data/CLI_mode/my_transcripts"
  
- python -m sift.engines.media.cli --clean-bulk ./data/my_collections/test.txt
+ python -m sift.engines.media.cli --clean-bulk ./data/CLI_mode/my_collections/test.txt
 """
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -76,6 +76,8 @@ def main():
                         help="Base32 TOTP secret for automatic 2FA (instagrapi modes only)")
     parser.add_argument("--sessionid", help="Inject browser sessionid cookie (instagrapi modes only)")
     parser.add_argument("--proxy",     help="Proxy URL (instagrapi modes only)")
+    parser.add_argument("--collection-id",
+                        help="Instagram saved collection ID from a URL like /saved/<slug>/<id>/")
 
     parser.add_argument("--first-n",   type=int, default=0)
     parser.add_argument("--last-n",    type=int, default=0)
@@ -85,15 +87,17 @@ def main():
     args = parser.parse_args()
     
     
-    base_dir = args.outdir if args.outdir else "./data/insta"
+    base_dir = args.outdir if args.outdir else "./data/CLI_mode/insta"
     combined_file_path = None
     session_dir = None
+    collection_root = None
 
     if args.private_user:
         safe_name = sanitize_filename(args.private_user)
-        session_dir = os.path.join(base_dir, "my_collections")
-        outdir = os.path.join(session_dir, safe_name)
-        combined_file_path = os.path.join(session_dir, f"{safe_name}.txt")
+        collection_root = os.path.join(base_dir, safe_name)
+        session_dir = collection_root
+        outdir = os.path.join(collection_root, "Posts")
+        combined_file_path = os.path.join(collection_root, "all_combined.txt")
 
     elif args.public_user:
         safe_name = sanitize_filename(args.public_user)
@@ -109,7 +113,7 @@ def main():
         combined_file_path = os.path.join(base_dir, "bulk_posts", "bulk_combined.txt")
 
     elif args.youtube:
-        outdir = args.outdir if args.outdir else "./data/youtube"
+        outdir = args.outdir if args.outdir else "./data/CLI_mode/youtube"
         # YouTube doesn't use the combined file logic yet, handled in YoutubeService
 
     if not args.clean_bulk:
@@ -142,7 +146,7 @@ def main():
     # --private-user uses the browser fetcher.
     # Credentials are only needed on the very first run to log in; after that
     # the session is cached in web_session.json and no flags are required.
-    session_cache = os.path.join(args.outdir, "web_session.json")
+    session_cache = os.path.join(session_dir if args.private_user else args.outdir, "web_session.json")
     if args.private_user and not os.path.exists(session_cache):
         if not (args.username and args.password):
             parser.error(
@@ -156,9 +160,14 @@ def main():
         if args.first_n == 0 and args.last_n == 0:
             args.first_n = 50
 
-    ensure_dir(args.outdir)
+    if args.private_user:
+        ensure_dir(collection_root)
+        ensure_dir(outdir)
+        checkpoint_path = os.path.join(collection_root, args.checkpoint)
+    else:
+        ensure_dir(args.outdir)
+        checkpoint_path = os.path.join(args.outdir, args.checkpoint)
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    checkpoint_path = os.path.join(args.outdir, args.checkpoint)
 
     if torch.cuda.is_available():
         logger.info("CUDA is available. Using GPU for processing.")
@@ -191,9 +200,19 @@ def main():
             username=args.username,   # None is fine if session is cached
             password=args.password,
         )
-        media_items = web.fetch_collection(args.private_user,
-                                           first_n=args.first_n, last_n=args.last_n)
-        ScraperService.process_posts(media_items, args.outdir, device, checkpoint_path)
+        media_items = web.fetch_collection(
+            args.private_user,
+            first_n=args.first_n,
+            last_n=args.last_n,
+            collection_id=args.collection_id,
+        )
+        ScraperService.process_posts(
+            media_items,
+            outdir,
+            device,
+            checkpoint_path,
+            combined_file_path,
+        )
         return
 
     # ------------------------------------------------------------------ #

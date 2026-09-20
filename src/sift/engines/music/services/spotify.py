@@ -42,7 +42,10 @@ class SpotifyProvider:
                 client_id=SPOTIFY_CLIENT_ID,
                 client_secret=SPOTIFY_CLIENT_SECRET,
                 redirect_uri=SPOTIFY_REDIRECT_URI,
-                scope="playlist-read-private playlist-read-collaborative",
+                scope=(
+                    "playlist-read-private playlist-read-collaborative "
+                    "playlist-modify-private playlist-modify-public"
+                ),
                 open_browser=False,
                 cache_handler=user_cache_handler,
             )
@@ -84,6 +87,24 @@ class SpotifyProvider:
             return ""
         return images[-1].get("url") or images[0].get("url") or ""
 
+    @staticmethod
+    def _artist_metadata_by_id(client, artist_ids: list[str]) -> dict[str, dict]:
+        metadata = {}
+        unique_ids = list(dict.fromkeys(artist_id for artist_id in artist_ids if artist_id))
+        for start in range(0, len(unique_ids), 50):
+            chunk = unique_ids[start:start + 50]
+            if not chunk:
+                continue
+            try:
+                result = client.artists(chunk)
+            except Exception as exc:
+                logger.warning(f"Spotify artist metadata fetch failed: {exc}")
+                continue
+            for artist in result.get("artists") or []:
+                if artist and artist.get("id"):
+                    metadata[artist["id"]] = artist
+        return metadata
+
     def _get_tracks_from_id(self, playlist_id: str) -> List[Track]:
         return self._get_tracks_from_id_with_client(self.sp, playlist_id)
 
@@ -95,23 +116,70 @@ class SpotifyProvider:
                 playlist_id,
                 offset=offset,
                 limit=100,
-                fields="items(track(name,duration_ms,artists(name),album(name,images))),next",
+                fields=(
+                    "items(added_at,added_by(id),"
+                    "track(id,uri,name,duration_ms,explicit,popularity,preview_url,"
+                    "track_number,disc_number,external_urls(spotify),"
+                    "artists(id,name,external_urls(spotify)),"
+                    "album(id,name,album_type,release_date,total_tracks,images,external_urls(spotify))))"
+                    ",next"
+                ),
             )
             if not res.get("items"):
                 break
 
+            page_artist_ids = []
+            for item in res["items"]:
+                track = item.get("track") or {}
+                for artist in track.get("artists") or []:
+                    if artist.get("id"):
+                        page_artist_ids.append(artist["id"])
+            artist_metadata = self._artist_metadata_by_id(client, page_artist_ids)
+
             for item in res["items"]:
                 track = item.get("track")
                 if track:
-                    artist = track["artists"][0]["name"] if track["artists"] else "Unknown"
+                    track_artists = track.get("artists") or []
+                    artist_names = [artist.get("name", "") for artist in track_artists if artist.get("name")]
+                    artist_ids = [artist.get("id", "") for artist in track_artists if artist.get("id")]
+                    artist_urls = [
+                        (artist.get("external_urls") or {}).get("spotify", "")
+                        for artist in track_artists
+                        if (artist.get("external_urls") or {}).get("spotify")
+                    ]
+                    artist_genres = []
+                    for artist_id in artist_ids:
+                        for genre in (artist_metadata.get(artist_id) or {}).get("genres") or []:
+                            if genre not in artist_genres:
+                                artist_genres.append(genre)
+                    artist = artist_names[0] if artist_names else "Unknown"
                     album = track.get("album") or {}
                     tracks.append(
                         Track(
                             title=track["name"],
                             artist=artist,
+                            artists=artist_names,
+                            artist_ids=artist_ids,
+                            artist_urls=artist_urls,
+                            artist_genres=artist_genres,
                             album=album.get("name", ""),
+                            album_id=album.get("id") or "",
+                            album_type=album.get("album_type") or "",
+                            album_release_date=album.get("release_date") or "",
+                            album_total_tracks=album.get("total_tracks") or 0,
+                            album_url=(album.get("external_urls") or {}).get("spotify", ""),
                             image_url=self._image_url(album.get("images")),
                             duration_ms=track.get("duration_ms") or 0,
+                            explicit=bool(track.get("explicit")),
+                            popularity=track.get("popularity") or 0,
+                            spotify_id=track.get("id") or "",
+                            spotify_uri=track.get("uri") or "",
+                            spotify_url=(track.get("external_urls") or {}).get("spotify", ""),
+                            track_number=track.get("track_number") or 0,
+                            disc_number=track.get("disc_number") or 0,
+                            added_at=item.get("added_at") or "",
+                            added_by=(item.get("added_by") or {}).get("id") or "",
+                            preview_url=track.get("preview_url") or "",
                         )
                     )
 
@@ -190,11 +258,12 @@ class SpotifyProvider:
                     logger.warning(f"Spotify {level} fetch failed for playlist '{name}': {exc}")
         return playlists, errors
 
-    def fetch_user_library(self) -> Dict[str, List[Track]]:
+    def fetch_user_library(self, owned_only: bool = False) -> Dict[str, List[Track]]:
         if not hasattr(self, "user_auth_manager"):
             raise PermissionError("Cannot fetch user library in public mode.")
 
-        logger.info(f"Fetching library for user: {self.user_id}")
+        scope = "owned playlists" if owned_only else "library"
+        logger.info(f"Fetching {scope} for user: {self.user_id}")
         playlist_refs = []
         seen_names = set()
         offset = 0
@@ -203,6 +272,9 @@ class SpotifyProvider:
             if not res["items"]:
                 break
             for playlist in res["items"]:
+                owner = playlist.get("owner") or {}
+                if owned_only and owner.get("id") != self.user_id:
+                    continue
                 name = playlist["name"]
                 display_name = name
                 duplicate_count = 2
