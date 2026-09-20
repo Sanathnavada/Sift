@@ -5,9 +5,28 @@ from dataclasses import dataclass
 class Track:
     title: str
     artist: str = ""
+    artists: list[str] | None = None
+    artist_ids: list[str] | None = None
+    artist_urls: list[str] | None = None
+    artist_genres: list[str] | None = None
     album: str = ""
+    album_id: str = ""
+    album_type: str = ""
+    album_release_date: str = ""
+    album_total_tracks: int = 0
+    album_url: str = ""
     image_url: str = ""
     duration_ms: int = 0
+    explicit: bool = False
+    popularity: int = 0
+    spotify_id: str = ""
+    spotify_uri: str = ""
+    spotify_url: str = ""
+    track_number: int = 0
+    disc_number: int = 0
+    added_at: str = ""
+    added_by: str = ""
+    preview_url: str = ""
     is_dummy: bool = False
 
     @property

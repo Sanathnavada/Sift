@@ -110,9 +110,20 @@ def export_track_lists(playlists: dict, output_path: Path = None) -> Path:
             f.write(f"Tracks: {len(tracks)}\n")
             f.write("-" * 40 + "\n")
             for index, track in enumerate(tracks, 1):
-                artist = track.artist or "Unknown"
-                album = f" [{track.album}]" if track.album else ""
-                f.write(f"{index}. {track.title} - {artist}{album}\n")
+                artists = ", ".join(track.artists or [track.artist or "Unknown"])
+                genres = ", ".join(track.artist_genres or [])
+                f.write(f"{index}. {track.title}\n")
+                f.write(f"   Artists: {artists}\n")
+                f.write(f"   Album: {track.album}\n")
+                if track.album_release_date:
+                    f.write(f"   Album Release Date: {track.album_release_date}\n")
+                if genres:
+                    f.write(f"   Artist Genres: {genres}\n")
+                if track.spotify_uri:
+                    f.write(f"   Track URI: {track.spotify_uri}\n")
+                if track.spotify_url:
+                    f.write(f"   Track URL: {track.spotify_url}\n")
+                f.write("\n")
             f.write("\n")
 
     return output_path
@@ -171,20 +182,25 @@ def filter_playlists_interactively(playlists: dict) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="Modular Music Pipeline")
-    parser.add_argument("--mode", choices=["user", "link", "song", "yt"], required=True)
+    parser.add_argument("--mode", choices=["user", "link", "song", "yt", "create-playlist"], required=True)
     parser.add_argument("--input", help="URL or Song/Video Name", default="")
+    parser.add_argument("--name", help="Playlist name for create-playlist mode", default="")
+    parser.add_argument("--public", action="store_true",
+                        help="Create a public Spotify playlist instead of a private one.")
     parser.add_argument("--outdir", default=None,
                         help="(yt mode) Directory to save the audio file. "
                              "Omit to use ephemeral temp storage (for future UI use).")
     parser.add_argument("--list-only", action="store_true",
                         help="For Spotify user/link modes, export track lists without downloading.")
+    parser.add_argument("--owned-only", action="store_true",
+                        help="In Spotify user mode, show only playlists created by the authenticated user.")
     args = parser.parse_args()
 
     # Initialize Services
     try:
         if args.mode == "link":
             sp = SpotifyProvider(use_user_auth=False)
-        elif args.mode == "user":
+        elif args.mode in {"user", "create-playlist"}:
             sp = SpotifyProvider(use_user_auth=True)
     except Exception as e:
         logger.error(str(e))
@@ -194,6 +210,22 @@ def main():
 
     # --- DATA COLLECTION ---
     playlists_to_process = {}
+
+    if args.mode == "create-playlist":
+        if not args.name:
+            logger.error("Mode 'create-playlist' requires --name")
+            return
+        playlist = sp.sp.user_playlist_create(
+            sp.user_id,
+            args.name,
+            public=args.public,
+            collaborative=False,
+            description="Created by Sift music CLI.",
+        )
+        print(f"Created playlist: {playlist.get('name')}")
+        print(f"ID: {playlist.get('id')}")
+        print(f"URL: {playlist.get('external_urls', {}).get('spotify')}")
+        return
 
     if args.mode == "song":
         if not args.input:
@@ -252,7 +284,7 @@ def main():
         playlists_to_process = sp.fetch_by_url(args.input)
 
     elif args.mode == "user":
-        full_library = sp.fetch_user_library()
+        full_library = sp.fetch_user_library(owned_only=args.owned_only)
         if not full_library:
             print("❌ No playlists found.")
             return
