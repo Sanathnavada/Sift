@@ -22,6 +22,10 @@ def _task_card_url(task_id: str, container_id: str) -> str:
     return f"/ui/tasks/{task_id}/card?container_id={container_id}"
 
 
+def _task_stream_url(task_id: str, container_id: str) -> str:
+    return f"/ui/tasks/{task_id}/stream?container_id={container_id}"
+
+
 def _artifact_list_url(task_id: str) -> str:
     return f"/ui/tasks/{task_id}/artifacts"
 
@@ -179,6 +183,7 @@ def _task_view_model(task, *, container_id: str) -> dict:
     return {
         "task": task,
         "task_card_url": _task_card_url(task.id, container_id),
+        "task_stream_url": _task_stream_url(task.id, container_id),
         "task_page_url": _task_page_url(task.id),
         "artifact_list_url": _artifact_list_url(task.id),
         "is_detail_view": on_detail_page,

@@ -16,6 +16,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 from .estimation import initialize_task_estimate, update_estimate_from_event, update_queue_estimates
 from .runtime_capacity import MAX_CONCURRENT_JOBS, TASK_LANE_CONCURRENCY
+from .task_events import task_event_notifier
 
 
 LANE_HEAVY_MEDIA = "heavy_media"
@@ -226,6 +227,9 @@ class TaskManager:
             self._queues.setdefault(lane, deque()).append(_QueuedJob(task_id=task.id, runner=runner))
             self._refresh_queue_positions_locked()
             self._queue_event.set()
+        self._publish_task_card(task.id)
+        self._publish_system_status()
+        self._publish_active_task_cards()
 
     def get_task(self, task_id: Optional[str]) -> Optional[Task]:
         if not task_id:
@@ -251,6 +255,9 @@ class TaskManager:
                 task.queue_position = 0
                 self._refresh_queue_positions_locked()
                 self._queue_event.set()
+                self._publish_task_card(task.id)
+                self._publish_system_status()
+                self._publish_active_task_cards()
                 return True
 
             if task.status != "running":
@@ -265,6 +272,7 @@ class TaskManager:
         task = self._tasks.get(task_id)
         if task:
             task.artifacts = artifacts
+            self._publish_task_card(task_id)
 
     def queue_summary(self) -> dict[str, Any]:
         self._refresh_estimates_unlocked()
@@ -407,6 +415,8 @@ class TaskManager:
         handle = asyncio.create_task(self._run_job(job))
         self._running_handles[job.task_id] = handle
         self._running_lanes[job.task_id] = lane
+        self._publish_task_card(job.task_id)
+        self._publish_system_status()
 
     def _has_queued_jobs_locked(self) -> bool:
         return any(queue for queue in self._queues.values())
@@ -459,6 +469,9 @@ class TaskManager:
             self._running_lanes.pop(task.id, None)
             self._refresh_queue_positions_locked()
             self._queue_event.set()
+        self._publish_task_card(task.id)
+        self._publish_system_status()
+        self._publish_active_task_cards()
 
     def _refresh_estimates_unlocked(self) -> None:
         update_queue_estimates(
@@ -488,6 +501,17 @@ class TaskManager:
                 task.meta.setdefault("lane_label", _lane_label(lane))
 
         self._refresh_estimates_unlocked()
+
+    def _publish_task_card(self, task_id: str) -> None:
+        task_event_notifier.publish(task_id)
+
+    def _publish_system_status(self) -> None:
+        task_event_notifier.publish_system_status()
+
+    def _publish_active_task_cards(self) -> None:
+        for task in self._tasks.values():
+            if task.status in {"queued", "running"}:
+                self._publish_task_card(task.id)
 
 
 task_manager = TaskManager(
@@ -583,6 +607,8 @@ def append_task_event(task_id: str, message: str) -> None:
             min(20, task.meta["estimated_transcription_seconds"] // 4 or 5),
         )
     task_manager._refresh_estimates_unlocked()
+    task_event_notifier.publish(task_id)
+    task_event_notifier.publish_system_status()
 
 
 def get_queue_summary() -> dict[str, Any]:

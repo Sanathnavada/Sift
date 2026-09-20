@@ -113,9 +113,9 @@
     </div>
     <div
       id="system-status-panel"
-      hx-get="/ui/system/status"
-      hx-trigger="load, every 8s"
-      hx-swap="innerHTML">
+      data-system-status-url="/ui/system/status"
+      data-system-status-stream-url="/ui/system/status/stream"
+      data-system-status-poll-interval-seconds="8">
       {% include "partials/system_status.html" %}
     </div>
   </aside>

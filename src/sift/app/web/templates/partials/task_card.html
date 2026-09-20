@@ -1,9 +1,12 @@
 <article
   class="task-card"
+  data-task-id="{{ task.id }}"
+  data-task-status="{{ task.status }}"
+  data-task-terminal="{% if task.status in ['completed', 'failed', 'cancelled'] %}true{% else %}false{% endif %}"
+  data-task-card-url="{{ task_card_url }}"
+  data-task-poll-interval-seconds="{{ poll_interval_seconds }}"
   {% if is_polling %}
-  hx-get="{{ task_card_url }}"
-  hx-trigger="every {{ poll_interval_seconds }}s"
-  hx-swap="outerHTML"
+  data-task-stream-url="{{ task_stream_url }}"
   {% endif %}>
   {% set on_detail_page = is_detail_view if is_detail_view is defined else "task-detail-panel" in task_card_url %}
   <div class="task-card__header">

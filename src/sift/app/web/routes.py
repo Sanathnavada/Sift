@@ -11,7 +11,7 @@ from markupsafe import Markup
 from urllib.parse import parse_qs, urlparse, urlsplit, urlunsplit
 
 from fastapi import APIRouter, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 from ..runtime.auth_sessions import SpotifyAuthConfigurationError, spotify_auth_sessions
@@ -47,6 +47,7 @@ from ..runtime.tasks import (
     submit_async_job,
     submit_bound_job,
 )
+from ..runtime.task_events import task_event_notifier
 from ..api.routes import media as media_api
 from ..api.routes import music as music_api
 from ..api.routes import telegram as telegram_api
@@ -65,6 +66,7 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 INSTAGRAM_AUTH_TASK_COOKIE = "gateway_instagram_auth_task_id"
 UI_SESSION_COOKIE = "gateway_client_session_id"
 GITHUB_URL = "https://github.com/Sanathnavada/Code"
+TASK_TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 
 
 def _format_host_port(host: str, port: int | None) -> str:
@@ -506,6 +508,79 @@ def _render_task_card(request: Request, task_id: str, *, title: Optional[str] = 
     )
 
 
+def _render_task_card_fragment(request: Request, task_id: str, *, container_id: str = "task-panel") -> Markup:
+    task = get_task(task_id)
+    if not task:
+        return _render_fragment(request, "partials/stale_task_card.html")
+    view_model = _task_view_model(task, container_id=container_id)
+    if task.service.startswith("music."):
+        view_model.update(_music_download_tray_context(request, oob=True))
+    if (
+        task.service == "music.user_playlists"
+        and task.status == "completed"
+        and view_model["playlist_options"]
+    ):
+        view_model["playlist_target_id"] = "#music-library-task-panel"
+        return _render_fragment(
+            request,
+            "partials/spotify_library_panel.html",
+            **view_model,
+        )
+    return _render_fragment(
+        request,
+        "partials/task_card.html",
+        **view_model,
+    )
+
+
+def _sse_event(event: str, payload: str) -> str:
+    lines = [f"event: {event}"]
+    for line in str(payload).splitlines() or [""]:
+        lines.append(f"data: {line}")
+    return "\n".join(lines) + "\n\n"
+
+
+def _render_system_status_fragment(request: Request) -> Markup:
+    return _render_fragment(
+        request,
+        "partials/system_status.html",
+        status_cards=_task_summary_cards(),
+        queue_summary=get_queue_summary(),
+    )
+
+
+async def _task_card_event_stream(request: Request, task_id: str, *, container_id: str = "task-panel"):
+    task = get_task(task_id)
+    if not task:
+        yield _sse_event("task-card", str(_render_fragment(request, "partials/stale_task_card.html")))
+        return
+
+    yield _sse_event("task-card", str(_render_task_card_fragment(request, task_id, container_id=container_id)))
+    if task.status in TASK_TERMINAL_STATUSES:
+        return
+
+    async with task_event_notifier.subscribe(task_id) as updates:
+        while True:
+            await updates.get()
+            if await request.is_disconnected():
+                return
+            latest_task = get_task(task_id)
+            yield _sse_event("task-card", str(_render_task_card_fragment(request, task_id, container_id=container_id)))
+            if not latest_task or latest_task.status in TASK_TERMINAL_STATUSES:
+                return
+
+
+async def _system_status_event_stream(request: Request):
+    yield _sse_event("system-status", str(_render_system_status_fragment(request)))
+
+    async with task_event_notifier.subscribe_system_status() as updates:
+        while True:
+            await updates.get()
+            if await request.is_disconnected():
+                return
+            yield _sse_event("system-status", str(_render_system_status_fragment(request)))
+
+
 @router.get("/", response_class=HTMLResponse, name="ui_home")
 async def home_page(request: Request):
     return _render(
@@ -574,6 +649,18 @@ async def system_status_partial(request: Request):
         "partials/system_status.html",
         status_cards=_task_summary_cards(),
         queue_summary=get_queue_summary(),
+    )
+
+
+@router.get("/ui/system/status/stream")
+async def system_status_stream(request: Request):
+    return StreamingResponse(
+        _system_status_event_stream(request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
@@ -1347,6 +1434,18 @@ async def task_card_partial(request: Request, task_id: str, container_id: str = 
     if not get_task(task_id):
         return _render(request, "partials/stale_task_card.html")
     return _render_task_card(request, task_id, container_id=container_id)
+
+
+@router.get("/ui/tasks/{task_id}/stream")
+async def task_card_stream(request: Request, task_id: str, container_id: str = "task-panel"):
+    return StreamingResponse(
+        _task_card_event_stream(request, task_id, container_id=container_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/ui/tasks/{task_id}/artifacts", response_class=HTMLResponse)

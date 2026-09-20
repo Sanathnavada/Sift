@@ -9,6 +9,9 @@
   var instagramAuthCloseUrl = "";
   var instagramAuthPopupWatch = null;
   var instagramAuthClosingExpected = false;
+  var activeTaskStreams = {};
+  var systemStatusStream = null;
+  var systemStatusPollTimer = null;
 
   function readCookie(name) {
     var prefix = name + "=";
@@ -404,6 +407,205 @@
     return null;
   }
 
+  function isTaskCardTerminal(card) {
+    return card && card.dataset.taskTerminal === "true";
+  }
+
+  function closeTaskStream(key) {
+    var entry = activeTaskStreams[key];
+    if (!entry) {
+      return;
+    }
+    if (entry.source) {
+      entry.source.close();
+    }
+    if (entry.pollTimer) {
+      window.clearInterval(entry.pollTimer);
+    }
+    delete activeTaskStreams[key];
+  }
+
+  function hasTaskCardForStream(key) {
+    return Array.prototype.some.call(document.querySelectorAll("[data-task-stream-url]"), function (card) {
+      return card.dataset.taskStreamUrl === key;
+    });
+  }
+
+  function cleanupTaskStreams() {
+    Object.keys(activeTaskStreams).forEach(function (key) {
+      if (!hasTaskCardForStream(key)) {
+        closeTaskStream(key);
+      }
+    });
+  }
+
+  function applyOutOfBandNodes(fragment) {
+    Array.prototype.slice.call(fragment.querySelectorAll("[hx-swap-oob]")).forEach(function (node) {
+      var target = node.id ? document.getElementById(node.id) : null;
+      if (!target) {
+        node.remove();
+        return;
+      }
+      target.innerHTML = node.innerHTML;
+      init(target);
+      node.remove();
+    });
+  }
+
+  function replaceTaskCard(card, html, key) {
+    if (!card || !html) {
+      return null;
+    }
+    var template = document.createElement("template");
+    template.innerHTML = html.trim();
+    applyOutOfBandNodes(template.content);
+    var newCard = template.content.querySelector(".task-card") || template.content.firstElementChild;
+    if (!newCard) {
+      return null;
+    }
+    card.replaceWith(newCard);
+    if (window.htmx && window.htmx.process) {
+      window.htmx.process(newCard);
+    }
+    init(newCard);
+    if (isTaskCardTerminal(newCard) || !newCard.dataset.taskStreamUrl) {
+      closeTaskStream(key);
+    }
+    return newCard;
+  }
+
+  function startTaskPollingFallback(card, key) {
+    var url = card.dataset.taskCardUrl;
+    var intervalSeconds = Number.parseInt(card.dataset.taskPollIntervalSeconds || "2", 10);
+    if (!url || !window.htmx || isTaskCardTerminal(card)) {
+      return;
+    }
+    if (!Number.isFinite(intervalSeconds) || intervalSeconds < 1) {
+      intervalSeconds = 2;
+    }
+    activeTaskStreams[key] = {
+      pollTimer: window.setInterval(function () {
+        var currentCard = document.querySelector('[data-task-stream-url="' + key.replace(/"/g, '\\"') + '"]');
+        if (!currentCard || isTaskCardTerminal(currentCard)) {
+          closeTaskStream(key);
+          return;
+        }
+        window.htmx.ajax("GET", url, { target: currentCard, swap: "outerHTML" });
+      }, intervalSeconds * 1000)
+    };
+  }
+
+  function initTaskCardStreams(root) {
+    cleanupTaskStreams();
+    root.querySelectorAll("[data-task-stream-url]").forEach(function (card) {
+      var key = card.dataset.taskStreamUrl;
+      if (!key || activeTaskStreams[key] || isTaskCardTerminal(card)) {
+        return;
+      }
+      if (!("EventSource" in window)) {
+        startTaskPollingFallback(card, key);
+        return;
+      }
+      var source = new EventSource(key);
+      activeTaskStreams[key] = { source: source };
+      source.addEventListener("task-card", function (event) {
+        var currentCard = document.querySelector('[data-task-stream-url="' + key.replace(/"/g, '\\"') + '"]');
+        var replacement = replaceTaskCard(currentCard || card, event.data, key);
+        if (replacement) {
+          card = replacement;
+        }
+      });
+      source.onerror = function () {
+        if (isTaskCardTerminal(card) || !hasTaskCardForStream(key)) {
+          closeTaskStream(key);
+        }
+      };
+    });
+  }
+
+  function closeSystemStatusStream() {
+    if (systemStatusStream) {
+      systemStatusStream.close();
+      systemStatusStream = null;
+    }
+    if (systemStatusPollTimer) {
+      window.clearInterval(systemStatusPollTimer);
+      systemStatusPollTimer = null;
+    }
+  }
+
+  function findSystemStatusPanel(root) {
+    if (root.matches && root.matches("#system-status-panel")) {
+      return root;
+    }
+    return root.querySelector ? root.querySelector("#system-status-panel") : null;
+  }
+
+  function refreshSystemStatusPanel(panel) {
+    var url = panel && panel.dataset.systemStatusUrl;
+    if (!url || !document.body.contains(panel)) {
+      closeSystemStatusStream();
+      return;
+    }
+    fetch(url, { credentials: "same-origin" })
+      .then(function (response) {
+        if (!response.ok) {
+          throw new Error("System status refresh failed");
+        }
+        return response.text();
+      })
+      .then(function (html) {
+        panel.innerHTML = html;
+        init(panel);
+      })
+      .catch(function () {});
+  }
+
+  function startSystemStatusPollingFallback(panel) {
+    var intervalSeconds = Number.parseInt(panel.dataset.systemStatusPollIntervalSeconds || "8", 10);
+    if (!Number.isFinite(intervalSeconds) || intervalSeconds < 1) {
+      intervalSeconds = 8;
+    }
+    refreshSystemStatusPanel(panel);
+    systemStatusPollTimer = window.setInterval(function () {
+      refreshSystemStatusPanel(panel);
+    }, intervalSeconds * 1000);
+  }
+
+  function initSystemStatusStream(root) {
+    var panel = findSystemStatusPanel(root);
+    if (!panel || !panel.dataset.systemStatusStreamUrl) {
+      if ((systemStatusStream || systemStatusPollTimer) && !document.getElementById("system-status-panel")) {
+        closeSystemStatusStream();
+      }
+      return;
+    }
+    if (systemStatusStream || systemStatusPollTimer) {
+      return;
+    }
+    if (!("EventSource" in window)) {
+      startSystemStatusPollingFallback(panel);
+      return;
+    }
+    systemStatusStream = new EventSource(panel.dataset.systemStatusStreamUrl);
+    systemStatusStream.addEventListener("system-status", function (event) {
+      if (!document.body.contains(panel)) {
+        closeSystemStatusStream();
+        return;
+      }
+      panel.innerHTML = event.data;
+      init(panel);
+    });
+    systemStatusStream.onerror = function () {
+      if (!document.body.contains(panel)) {
+        closeSystemStatusStream();
+        return;
+      }
+      closeSystemStatusStream();
+      startSystemStatusPollingFallback(panel);
+    };
+  }
+
 
   function setMediaWorkspaceMode(mode) {
     var workspace = document.querySelector("[data-media-task-workspace]");
@@ -655,6 +857,8 @@
   }
 
   function init(root) {
+    initTaskCardStreams(root);
+    initSystemStatusStream(root);
     initOutputModeGroups(root);
     initModeGroups(root);
     initTabGroups(root);

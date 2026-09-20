@@ -57,6 +57,7 @@ def test_task_view_model_preserves_task_card_contract_for_completed_task():
     assert model["display_status"] == "completed"
     assert model["display_status_variant"] == "success"
     assert model["task_card_url"] == "/ui/tasks/task-1/card?container_id=music-task-panel"
+    assert model["task_stream_url"] == "/ui/tasks/task-1/stream?container_id=music-task-panel"
     assert model["task_page_url"] == "/tasks/task-1"
     assert model["artifact_list_url"] == "/ui/tasks/task-1/artifacts"
     assert model["duration_label"] == "1m 05s"
